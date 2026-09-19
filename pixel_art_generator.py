@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-🎨 PIXEL ART AI GENERATOR v2 — com silhuetas compostas por archetype
+🎨 PIXEL ART AI GENERATOR v3 — com mutação de características entre seeds
 """
 import argparse
 import hashlib
@@ -13,12 +13,11 @@ from PIL import Image, ImageDraw
 from scipy import ndimage
 
 # ============================================================
-# PALETAS REAIS DE CONSOLES
+# PALETAS
 # ============================================================
 STYLES = {
     'gameboy': ['#0f380f', '#306230', '#8bac0f', '#9bbc0f'],
     'gameboy-pocket': ['#000000', '#555555', '#aaaaaa', '#ffffff'],
-    'gameboy-light':  ['#2b2b2b', '#5a5a5a', '#9a9a9a', '#dadada'],
     'nes': [
         '#7c7c7c','#0000fc','#0000bc','#4028bc','#940084','#a80020','#a81000','#881400',
         '#503000','#007800','#006800','#005800','#004058','#000000','#000000','#000000',
@@ -36,40 +35,29 @@ STYLES = {
     'cga': ['#000000','#555555','#0000aa','#5555ff','#00aa00','#55ff55',
             '#00aaaa','#55ffff','#aa0000','#ff5555','#aa00aa','#ff55ff',
             '#aa5500','#ffff55','#aaaaaa','#ffffff'],
-    'cga-high': ['#000000','#55ffff','#ff55ff','#ffffff'],
-    'cga-low':  ['#000000','#ff5555','#ffff55','#ffffff'],
     'ega': ['#000000','#0000aa','#00aa00','#00aaaa','#aa0000','#aa00aa','#aa5500','#aaaaaa',
             '#555555','#5555ff','#55ff55','#55ffff','#ff5555','#ff55ff','#ffff55','#ffffff'],
     'grayscale': [f'#{i:02x}{i:02x}{i:02x}' for i in range(0, 256, 32)],
     'monochrome': ['#000000', '#ffffff'],
     'neon':  ['#0d0221','#ff006e','#fb5607','#ffbe0b','#8338ec','#3a86ff','#ffffff'],
-    'pastel':['#f8f9fa','#ffd6e0','#d4f1f4','#b5ead7','#c7ceea','#fff5ba','#f0e6ff','#ffffff'],
-    'autumn':['#2b170a','#5c2e0a','#8b3a0a','#b84a0a','#d96c0a','#f59e0a','#f8c471','#fae3c7'],
     'cyber': ['#000000','#1a0b2e','#ff00ff','#00ffff','#ff0080','#8000ff','#ffffff','#ffff00'],
 }
 
-# ============================================================
-# DITHERING (Bayer)
-# ============================================================
 DITHER_MATRICES = {
     'none':    None,
-    'bayer2x2': np.array([[0, 2],[3, 1]], dtype=float) / 4.0 - 0.5,
-    'bayer4x4': np.array([[ 0, 8, 2,10],[12, 4,14, 6],
-                          [ 3,11, 1, 9],[15, 7,13, 5]], dtype=float) / 16.0 - 0.5,
+    'bayer2x2': np.array([[0,2],[3,1]], dtype=float)/4.0 - 0.5,
+    'bayer4x4': np.array([[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]], dtype=float)/16.0 - 0.5,
     'bayer8x8': np.array([
-        [ 0,32, 8,40, 2,34,10,42],[48,16,56,24,50,18,58,26],
-        [12,44, 4,36,14,46, 6,38],[60,28,52,20,62,30,54,22],
-        [ 3,35,11,43, 1,33, 9,41],[51,19,59,27,49,17,57,25],
-        [15,47, 7,39,13,45, 5,37],[63,31,55,23,61,29,53,21]
-    ], dtype=float) / 64.0 - 0.5,
+        [0,32,8,40,2,34,10,42],[48,16,56,24,50,18,58,26],
+        [12,44,4,36,14,46,6,38],[60,28,52,20,62,30,54,22],
+        [3,35,11,43,1,33,9,41],[51,19,59,27,49,17,57,25],
+        [15,47,7,39,13,45,5,37],[63,31,55,23,61,29,53,21]
+    ], dtype=float)/64.0 - 0.5,
 }
 
-# ============================================================
-# HELPERS
-# ============================================================
 def hex_to_rgb(h):
     h = h.lstrip('#')
-    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    return (int(h[0:2],16), int(h[2:4],16), int(h[4:6],16))
 
 def seed_from_prompt(prompt, idx=0):
     h = hashlib.md5(f"{prompt}::{idx}".encode('utf-8')).digest()
@@ -82,452 +70,446 @@ def detect_archetype(prompt):
     p = (prompt or '').lower()
     if any(k in p for k in ['dragão','dragon','monstro','monster','beast','demon','slime',
                             'orc','goblin','serpent','snake','spider','boss','criatura',
-                            'grifo','griffin','lobo','wolf','urso','bear','troll']):
+                            'lobo','wolf','urso','bear','grifo']):
         return 'creature'
     if any(k in p for k in ['personagem','character','hero','herói','knight','guerreiro',
                             'warrior','mage','mago','elf','elfo','samurai','ninja','girl',
-                            'boy','man','woman','pirate','king','queen','rei','rainha',
-                            'garoto','garota','cavaleiro','princesa','príncipe']):
+                            'boy','man','woman','pirate','king','queen','rei','rainha']):
         return 'character'
     if any(k in p for k in ['espada','sword','potion','poção','shield','escudo','bow','arco',
-                            'axe','machado','key','chave','coin','moeda','gem','joia',
-                            'item','arma','weapon','staff','ring','anel','heart','coração',
-                            'livro','book','caixa','chest','bottle','garrafa']):
+                            'axe','machado','key','chave','coin','moeda','gem','joia','item']):
         return 'item'
     if any(k in p for k in ['castelo','castle','torre','tower','casa','house','dungeon',
-                            'cidade','city','building','prédio','templo','temple','igreja',
-                            'church','cabana','hut']):
+                            'cidade','building','prédio','templo','church']):
         return 'building'
-    if any(k in p for k in ['árvore','tree','planta','plant','flower','flor','cogumelo',
-                            'mushroom','grass','grama','bush','arbusto','leaf','folha']):
+    if any(k in p for k in ['árvore','tree','planta','plant','flower','flor','cogumelo']):
         return 'plant'
     if any(k in p for k in ['carro','car','ship','nave','spaceship','rocket','foguete',
-                            'plane','avião','tank','tanque','ufo','ovni','mech','robô','robot']):
+                            'plane','avião','tank','ufo','robô','robot']):
         return 'vehicle'
     return 'blob'
 
 # ============================================================
-# GERADORES DE SILHUETA POR ARCHETYPE (formas reconhecíveis!)
+# FEATURES MUTÁVEIS — cada seed escolhe proporções diferentes!
 # ============================================================
-def draw_ellipse(draw, cx, cy, rx, ry, fill=1):
-    draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=fill)
+def roll_features(rng, archetype, variation='medium'):
+    """Gera características aleatórias baseadas no seed + nível de variação."""
+    intensity = {'low': 0.3, 'medium': 0.7, 'heavy': 1.0}[variation]
+    f = {}
+    
+    if archetype == 'creature':
+        f['body_width']  = rng.uniform(0.55, 0.85) * intensity + rng.uniform(0.15, 0.3)
+        f['body_height'] = rng.uniform(0.35, 0.65) * intensity + rng.uniform(0.15, 0.25)
+        f['head_size']   = rng.uniform(0.10, 0.22) * intensity + rng.uniform(0.08, 0.12)
+        f['has_wings']   = rng.random() < 0.75 * intensity
+        f['has_horns']   = rng.random() < 0.60 * intensity
+        f['has_tail']    = rng.random() < 0.90 * intensity
+        f['tail_curve']  = rng.uniform(-0.3, 0.5)
+        f['leg_count']   = rng.choice([2, 4], p=[0.4, 0.6])
+        f['leg_length']  = rng.uniform(0.12, 0.28) * intensity + rng.uniform(0.08, 0.15)
+        f['neck_angle']  = rng.uniform(-0.25, 0.15)
+        f['head_pos']    = rng.uniform(0.15, 0.35)
+        f['body_pos_y']  = rng.uniform(0.45, 0.60)
+        
+    elif archetype == 'character':
+        f['head_size']   = rng.uniform(0.16, 0.26) * intensity + rng.uniform(0.12, 0.18)
+        f['body_width']  = rng.uniform(0.20, 0.38) * intensity + rng.uniform(0.15, 0.22)
+        f['body_height'] = rng.uniform(0.22, 0.38) * intensity + rng.uniform(0.18, 0.25)
+        f['arm_length']  = rng.uniform(0.15, 0.32) * intensity + rng.uniform(0.12, 0.18)
+        f['leg_length']  = rng.uniform(0.22, 0.38) * intensity + rng.uniform(0.18, 0.25)
+        f['has_hat']     = rng.random() < 0.55 * intensity
+        f['has_cape']    = rng.random() < 0.30 * intensity
+        f['head_y']      = rng.uniform(0.20, 0.32)
+        
+    elif archetype == 'item':
+        f['item_type']   = rng.choice(['sword', 'potion', 'shield', 'gem', 'axe'])
+        f['size_scale']  = rng.uniform(0.75, 1.15)
+        f['angle']       = rng.uniform(-15, 15)
+        f['has_glow']    = rng.random() < 0.40 * intensity
+        
+    elif archetype == 'building':
+        f['tower_count'] = rng.choice([1, 2, 3], p=[0.3, 0.5, 0.2])
+        f['base_width']  = rng.uniform(0.55, 0.75) * intensity + rng.uniform(0.35, 0.45)
+        f['base_height'] = rng.uniform(0.35, 0.55) * intensity + rng.uniform(0.25, 0.35)
+        f['roof_angle']  = rng.uniform(0.15, 0.35)
+        f['has_flag']    = rng.random() < 0.50 * intensity
+        
+    elif archetype == 'plant':
+        f['crown_shape'] = rng.choice(['round', 'pointed', 'wide'])
+        f['stem_width']  = rng.uniform(0.06, 0.15) * intensity + rng.uniform(0.05, 0.08)
+        f['crown_size']  = rng.uniform(0.25, 0.40) * intensity + rng.uniform(0.20, 0.28)
+        f['leaf_count']  = rng.choice([2, 3, 4])
+        
+    elif archetype == 'vehicle':
+        f['body_width']  = rng.uniform(0.55, 0.80) * intensity + rng.uniform(0.35, 0.45)
+        f['body_height'] = rng.uniform(0.20, 0.35) * intensity + rng.uniform(0.15, 0.22)
+        f['wheel_count'] = rng.choice([2, 4], p=[0.4, 0.6])
+        f['has_cabin']   = rng.random() < 0.70 * intensity
+        f['cabin_width'] = rng.uniform(0.25, 0.45) * intensity + rng.uniform(0.15, 0.25)
+        
+    else:  # blob
+        f['width']  = rng.uniform(0.35, 0.60) * intensity + rng.uniform(0.20, 0.30)
+        f['height'] = rng.uniform(0.30, 0.55) * intensity + rng.uniform(0.20, 0.28)
+        f['spikes'] = rng.random() < 0.30 * intensity
+        f['spike_count'] = rng.randint(3, 9)
+    
+    return f
 
-def draw_rect(draw, cx, cy, w, h, fill=1, angle=0):
-    if angle == 0:
-        draw.rectangle([cx - w/2, cy - h/2, cx + w/2, cy + h/2], fill=fill)
-    else:
-        # Para retângulos rotacionados, cria um canvas temporário
-        tmp = Image.new('L', (w + abs(h), h + abs(w)), 0)
-        d = ImageDraw.Draw(tmp)
-        d.rectangle([abs(h)/2, abs(w)/2, abs(h)/2 + w, abs(w)/2 + h], fill=fill)
-        tmp = tmp.rotate(angle, expand=True, resample=Image.NEAREST)
-        return tmp  # retorna a imagem para colar
-
-def silhouette_creature(w, h, rng):
-    """Dragão / monstro: corpo + cabeça + cauda + asas + pernas"""
+# ============================================================
+# DESENHADORES DE SILHUETA COM FEATURES
+# ============================================================
+def draw_creature(w, h, rng, f):
     mask = Image.new('L', (w, h), 0)
     d = ImageDraw.Draw(mask)
-    cx, cy = w // 2, h // 2
+    cx = w // 2
     
-    # Corpo principal (elipse larga)
-    body_rx = int(w * 0.28)
-    body_ry = int(h * 0.22)
-    body_cy = cy + int(h * 0.05)
-    draw_ellipse(d, cx, body_cy, body_rx, body_ry, fill=1)
+    body_rx = int(w * f['body_width'] / 2)
+    body_ry = int(h * f['body_height'] / 2)
+    body_cy = int(h * f['body_pos_y'])
     
-    # Cabeça (elipse à direita)
-    head_rx = int(w * 0.14)
-    head_ry = int(h * 0.13)
-    head_cx = cx + int(w * 0.28)
-    head_cy = body_cy - int(h * 0.08)
-    draw_ellipse(d, head_cx, head_cy, head_rx, head_ry, fill=1)
+    # Corpo
+    d.ellipse([cx-body_rx, body_cy-body_ry, cx+body_rx, body_cy+body_ry], fill=1)
     
-    # Pescoço (retângulo conectando)
-    neck_w = int(w * 0.08)
-    neck_h = int(h * 0.12)
+    # Cabeça
+    head_rx = int(w * f['head_size'])
+    head_ry = int(h * f['head_size'] * 0.9)
+    head_cx = cx + int(w * f['head_pos'])
+    head_cy = body_cy - int(h * 0.08) + int(h * f['neck_angle'])
+    d.ellipse([head_cx-head_rx, head_cy-head_ry, head_cx+head_rx, head_cy+head_ry], fill=1)
+    
+    # Pescoço
+    neck_w = int(w * 0.06)
+    neck_h = int(h * 0.10)
     neck_cx = (head_cx + cx) // 2
     neck_cy = (head_cy + body_cy) // 2
-    d.rectangle([neck_cx - neck_w/2, neck_cy - neck_h/2, 
-                 neck_cx + neck_w/2, neck_cy + neck_h/2], fill=1)
+    d.rectangle([neck_cx-neck_w/2, neck_cy-neck_h/2, neck_cx+neck_w/2, neck_cy+neck_h/2], fill=1)
     
-    # Cauda (triângulo longo à esquerda, curvando para cima)
-    tail_points = [
-        (cx - int(w * 0.18), body_cy),
-        (cx - int(w * 0.42), body_cy - int(h * 0.05)),
-        (cx - int(w * 0.40), body_cy + int(h * 0.08)),
-    ]
-    d.polygon(tail_points, fill=1)
-    # Ponta da cauda (seta)
-    tip_cx = cx - int(w * 0.42)
-    tip_cy = body_cy - int(h * 0.05)
-    d.polygon([
-        (tip_cx, tip_cy),
-        (tip_cx - int(w * 0.05), tip_cy - int(h * 0.05)),
-        (tip_cx - int(w * 0.03), tip_cy + int(h * 0.03)),
-    ], fill=1)
+    # Cauda
+    if f['has_tail']:
+        tail_len = int(w * 0.35 * rng.uniform(0.8, 1.2))
+        tail_curve = f['tail_curve']
+        pts = []
+        for i in range(8):
+            t = i / 7.0
+            tx = cx - int(w * 0.20) - int(tail_len * t)
+            ty = body_cy + int(h * tail_curve * t) - int(h * 0.02 * t)
+            pts.append((tx, ty))
+        pts.append((pts[-1][0] - int(w*0.05), pts[-1][1] - int(h*0.05)))
+        pts.append((pts[-1][0], pts[-1][1] + int(h*0.04)))
+        pts.append((pts[0][0], pts[0][1] + int(h*0.06)))
+        d.polygon(pts, fill=1)
     
-    # Asas (triângulos no topo do corpo)
-    if rng.random() < 0.85:
+    # Asas
+    if f['has_wings']:
+        wing_span = int(w * 0.35 * rng.uniform(0.7, 1.3))
+        wing_height = int(h * 0.35 * rng.uniform(0.7, 1.3))
+        wing_y = body_cy - int(h * 0.12)
         # Asa esquerda
-        wing_pts_l = [
-            (cx - int(w * 0.05), body_cy - int(h * 0.12)),
-            (cx - int(w * 0.20), body_cy - int(h * 0.42)),
-            (cx - int(w * 0.05), body_cy - int(h * 0.35)),
-            (cx + int(w * 0.02), body_cy - int(h * 0.20)),
-        ]
-        d.polygon(wing_pts_l, fill=1)
+        d.polygon([
+            (cx - int(w*0.05), wing_y),
+            (cx - wing_span, wing_y - wing_height),
+            (cx - int(w*0.05), wing_y - int(h*0.25)),
+            (cx + int(w*0.02), wing_y - int(h*0.10)),
+        ], fill=1)
         # Asa direita (espelhada)
-        wing_pts_r = [(w - 1 - x, y) for (x, y) in wing_pts_l]
-        d.polygon(wing_pts_r, fill=1)
-    
-    # Pernas (2 retângulos embaixo)
-    leg_w = int(w * 0.09)
-    leg_h = int(h * 0.18)
-    leg_y = body_cy + int(h * 0.18)
-    for lx in [cx - int(w * 0.15), cx + int(w * 0.08)]:
-        d.rectangle([lx - leg_w/2, leg_y - leg_h/2, 
-                     lx + leg_w/2, leg_y + leg_h/2], fill=1)
-        # Pés
-        d.rectangle([lx - leg_w*0.8, leg_y + leg_h/2, 
-                     lx + leg_w*0.8, leg_y + leg_h/2 + int(h * 0.03)], fill=1)
-    
-    # Chifres (pequenos triângulos na cabeça)
-    horn_base_y = head_cy - head_ry
-    for hx in [head_cx - int(w * 0.06), head_cx + int(w * 0.03)]:
         d.polygon([
-            (hx, horn_base_y),
-            (hx - int(w * 0.02), horn_base_y - int(h * 0.08)),
-            (hx + int(w * 0.02), horn_base_y - int(h * 0.08)),
+            (cx + int(w*0.05), wing_y),
+            (cx + wing_span, wing_y - wing_height),
+            (cx + int(w*0.05), wing_y - int(h*0.25)),
+            (cx - int(w*0.02), wing_y - int(h*0.10)),
         ], fill=1)
+    
+    # Pernas
+    leg_count = f['leg_count']
+    leg_w = int(w * 0.08)
+    leg_h = int(h * f['leg_length'])
+    leg_y = body_cy + int(h * 0.15)
+    if leg_count == 2:
+        positions = [cx - int(w*0.12), cx + int(w*0.08)]
+    else:
+        positions = [cx - int(w*0.18), cx - int(w*0.06), cx + int(w*0.04), cx + int(w*0.16)]
+    for lx in positions:
+        d.rectangle([lx-leg_w/2, leg_y, lx+leg_w/2, leg_y+leg_h], fill=1)
+        d.rectangle([lx-leg_w*0.9, leg_y+leg_h, lx+leg_w*0.9, leg_y+leg_h+int(h*0.03)], fill=1)
+    
+    # Chifres
+    if f['has_horns']:
+        horn_count = rng.choice([2, 3])
+        for i in range(horn_count):
+            hx = head_cx - int(w*0.05) + int(w*0.05) * i
+            hy = head_cy - head_ry
+            d.polygon([
+                (hx, hy),
+                (hx - int(w*0.02), hy - int(h*0.08)),
+                (hx + int(w*0.02), hy - int(h*0.08)),
+            ], fill=1)
     
     return np.array(mask, dtype=np.uint8)
 
-def silhouette_character(w, h, rng):
-    """Personagem humanoide: cabeça + corpo + braços + pernas (chibi)"""
+def draw_character(w, h, rng, f):
     mask = Image.new('L', (w, h), 0)
     d = ImageDraw.Draw(mask)
-    cx, cy = w // 2, h // 2
+    cx = w // 2
     
-    # Cabeça (grande, estilo chibi — 40% da altura)
-    head_ry = int(h * 0.22)
-    head_rx = int(w * 0.18)
-    head_cy = cy - int(h * 0.18)
-    draw_ellipse(d, cx, head_cy, head_rx, head_ry, fill=1)
+    head_ry = int(h * f['head_size'])
+    head_rx = int(w * f['head_size'] * 0.85)
+    head_cy = int(h * f['head_y'])
+    d.ellipse([cx-head_rx, head_cy-head_ry, cx+head_rx, head_cy+head_ry], fill=1)
     
-    # Corpo (retângulo)
-    body_w = int(w * 0.28)
-    body_h = int(h * 0.28)
-    body_cy = cy + int(h * 0.05)
-    d.rectangle([cx - body_w/2, body_cy - body_h/2, 
-                 cx + body_w/2, body_cy + body_h/2], fill=1)
+    body_w = int(w * f['body_width'])
+    body_h = int(h * f['body_height'])
+    body_cy = head_cy + int(h * 0.20)
+    d.rectangle([cx-body_w/2, body_cy-body_h/2, cx+body_w/2, body_cy+body_h/2], fill=1)
     
-    # Braços (retângulos laterais, levemente angulados)
-    arm_w = int(w * 0.09)
-    arm_h = int(h * 0.22)
-    for ax in [cx - body_w/2 - arm_w/2, cx + body_w/2 + arm_w/2]:
-        d.rectangle([ax - arm_w/2, body_cy - int(h * 0.05),
-                     ax + arm_w/2, body_cy - int(h * 0.05) + arm_h], fill=1)
+    arm_w = int(w * 0.08)
+    arm_h = int(h * f['arm_length'])
+    for ax in [cx-body_w/2-arm_w/2, cx+body_w/2+arm_w/2]:
+        d.rectangle([ax-arm_w/2, body_cy-int(h*0.03), ax+arm_w/2, body_cy-int(h*0.03)+arm_h], fill=1)
     
-    # Pernas (2 retângulos embaixo)
-    leg_w = int(w * 0.11)
-    leg_h = int(h * 0.28)
+    leg_w = int(w * 0.10)
+    leg_h = int(h * f['leg_length'])
     leg_top = body_cy + body_h/2
-    for lx in [cx - int(w * 0.07), cx + int(w * 0.07)]:
-        d.rectangle([lx - leg_w/2, leg_top, 
-                     lx + leg_w/2, leg_top + leg_h], fill=1)
+    for lx in [cx-int(w*0.06), cx+int(w*0.06)]:
+        d.rectangle([lx-leg_w/2, leg_top, lx+leg_w/2, leg_top+leg_h], fill=1)
     
-    # Cabelo / topo da cabeça (detalhe simples)
-    hair_w = int(w * 0.22)
-    hair_h = int(h * 0.06)
-    d.rectangle([cx - hair_w/2, head_cy - head_ry - hair_h/2,
-                 cx + hair_w/2, head_cy - head_ry + hair_h/2], fill=1)
+    if f['has_hat']:
+        hat_w = int(w * 0.24)
+        hat_h = int(h * 0.08)
+        d.rectangle([cx-hat_w/2, head_cy-head_ry-hat_h/2, cx+hat_w/2, head_cy-head_ry+hat_h/2], fill=1)
     
-    return np.array(mask, dtype=np.uint8)
-
-def silhouette_item(w, h, rng):
-    """Item genérico (espada, poção, etc) — escolhe aleatoriamente"""
-    mask = Image.new('L', (w, h), 0)
-    d = ImageDraw.Draw(mask)
-    cx, cy = w // 2, h // 2
-    
-    item_type = rng.choice(['sword', 'potion', 'shield', 'gem'])
-    
-    if item_type == 'sword':
-        # Lâmina (retângulo vertical longo)
-        blade_w = int(w * 0.08)
-        blade_h = int(h * 0.55)
-        blade_cy = cy - int(h * 0.12)
-        d.rectangle([cx - blade_w/2, blade_cy - blade_h/2,
-                     cx + blade_w/2, blade_cy + blade_h/2], fill=1)
-        # Ponta
-        d.polygon([
-            (cx - blade_w/2, blade_cy - blade_h/2),
-            (cx + blade_w/2, blade_cy - blade_h/2),
-            (cx, blade_cy - blade_h/2 - int(h * 0.05)),
-        ], fill=1)
-        # Guarda (retângulo horizontal)
-        guard_w = int(w * 0.30)
-        guard_h = int(h * 0.06)
-        guard_cy = blade_cy + blade_h/2
-        d.rectangle([cx - guard_w/2, guard_cy - guard_h/2,
-                     cx + guard_w/2, guard_cy + guard_h/2], fill=1)
-        # Cabo
-        grip_w = int(w * 0.10)
-        grip_h = int(h * 0.18)
-        grip_cy = guard_cy + guard_h/2 + grip_h/2
-        d.rectangle([cx - grip_w/2, grip_cy - grip_h/2,
-                     cx + grip_w/2, grip_cy + grip_h/2], fill=1)
-        # Pomo (círculo)
-        d.ellipse([cx - int(w * 0.06), grip_cy + grip_h/2 - int(h * 0.02),
-                   cx + int(w * 0.06), grip_cy + grip_h/2 + int(h * 0.08)], fill=1)
-        
-    elif item_type == 'potion':
-        # Frasco (círculo grande)
-        body_r = int(min(w, h) * 0.28)
-        body_cy = cy + int(h * 0.05)
-        draw_ellipse(d, cx, body_cy, body_r, body_r, fill=1)
-        # Pescoço (retângulo)
-        neck_w = int(w * 0.12)
-        neck_h = int(h * 0.15)
-        d.rectangle([cx - neck_w/2, body_cy - body_r - neck_h + int(h*0.03),
-                     cx + neck_w/2, body_cy - body_r + int(h*0.03)], fill=1)
-        # Tampa
-        cap_w = int(w * 0.18)
-        cap_h = int(h * 0.08)
-        cap_y = body_cy - body_r - neck_h - int(h*0.02)
-        d.rectangle([cx - cap_w/2, cap_y, cx + cap_w/2, cap_y + cap_h], fill=1)
-        
-    elif item_type == 'shield':
-        # Escudo (forma de ponta arredondada)
-        sh_w = int(w * 0.65)
-        sh_h = int(h * 0.75)
-        d.pieslice([cx - sh_w/2, cy - sh_h/2, cx + sh_w/2, cy + sh_h/2 + int(h*0.2)],
-                   0, 360, fill=1)
-        # Borda central
-        d.rectangle([cx - int(w*0.03), cy - sh_h/2, 
-                     cx + int(w*0.03), cy + sh_h/2 + int(h*0.1)], fill=1)
-        
-    else:  # gem
-        # Gema (diamante)
-        gem_w = int(w * 0.45)
-        gem_h = int(h * 0.55)
-        d.polygon([
-            (cx, cy - gem_h/2),
-            (cx + gem_w/2, cy),
-            (cx, cy + gem_h/2),
-            (cx - gem_w/2, cy),
-        ], fill=1)
+    if f['has_cape']:
+        cape_w = int(w * 0.30)
+        cape_h = int(h * 0.35)
+        d.rectangle([cx-cape_w/2, body_cy-int(h*0.05), cx+cape_w/2, body_cy-int(h*0.05)+cape_h], fill=1)
     
     return np.array(mask, dtype=np.uint8)
 
-def silhouette_building(w, h, rng):
-    """Castelo / casa: base + torres + telhado"""
+def draw_item(w, h, rng, f):
     mask = Image.new('L', (w, h), 0)
     d = ImageDraw.Draw(mask)
-    cx, cy = w // 2, h // 2
+    cx, cy = w//2, h//2
+    scale = f['size_scale']
     
-    # Base (retângulo largo)
-    base_w = int(w * 0.65)
-    base_h = int(h * 0.45)
-    base_cy = cy + int(h * 0.15)
-    d.rectangle([cx - base_w/2, base_cy - base_h/2,
-                 cx + base_w/2, base_cy + base_h/2], fill=1)
-    
-    # Telhado (triângulo no topo da base)
-    d.polygon([
-        (cx - base_w/2 - int(w*0.05), base_cy - base_h/2),
-        (cx, base_cy - base_h/2 - int(h * 0.15)),
-        (cx + base_w/2 + int(w*0.05), base_cy - base_h/2),
-    ], fill=1)
-    
-    # 2 torres laterais
-    tower_w = int(w * 0.15)
-    tower_h = int(h * 0.65)
-    for tx in [cx - base_w/2 - tower_w/2 + int(w*0.05), 
-               cx + base_w/2 - tower_w/2 - int(w*0.05)]:
-        ty = cy + int(h * 0.10)
-        d.rectangle([tx - tower_w/2, ty - tower_h/2,
-                     tx + tower_w/2, ty + tower_h/2], fill=1)
-        # Topo da torre (pontudo)
-        d.polygon([
-            (tx - tower_w/2, ty - tower_h/2),
-            (tx, ty - tower_h/2 - int(h * 0.10)),
-            (tx + tower_w/2, ty - tower_h/2),
-        ], fill=1)
-    
-    # Porta central (fica "cortada" como detalhe negativo mais tarde)
-    door_w = int(w * 0.12)
-    door_h = int(h * 0.25)
-    door_cy = base_cy + base_h/2 - door_h/2
-    d.rectangle([cx - door_w/2, door_cy - door_h/2,
-                 cx + door_w/2, door_cy + door_h/2], fill=1)
+    if f['item_type'] == 'sword':
+        blade_w = int(w * 0.07 * scale)
+        blade_h = int(h * 0.50 * scale)
+        blade_cy = cy - int(h * 0.10)
+        d.rectangle([cx-blade_w/2, blade_cy-blade_h/2, cx+blade_w/2, blade_cy+blade_h/2], fill=1)
+        d.polygon([(cx-blade_w/2, blade_cy-blade_h/2), (cx+blade_w/2, blade_cy-blade_h/2),
+                   (cx, blade_cy-blade_h/2-int(h*0.05*scale))], fill=1)
+        guard_w = int(w * 0.28 * scale)
+        d.rectangle([cx-guard_w/2, blade_cy+blade_h/2, cx+guard_w/2, blade_cy+blade_h/2+int(h*0.05)], fill=1)
+        grip_h = int(h * 0.18 * scale)
+        d.rectangle([cx-int(w*0.05), blade_cy+blade_h/2+int(h*0.05), cx+int(w*0.05), blade_cy+blade_h/2+int(h*0.05)+grip_h], fill=1)
+    elif f['item_type'] == 'potion':
+        r = int(min(w,h) * 0.25 * scale)
+        d.ellipse([cx-r, cy+r*0.3, cx+r, cy+r*1.3], fill=1)
+        d.rectangle([cx-int(w*0.06), cy-r*0.5, cx+int(w*0.06), cy+r*0.4], fill=1)
+        d.rectangle([cx-int(w*0.09), cy-r*0.7, cx+int(w*0.09), cy-r*0.5], fill=1)
+    elif f['item_type'] == 'shield':
+        sw, sh = int(w*0.55*scale), int(h*0.65*scale)
+        d.ellipse([cx-sw/2, cy-sh/2, cx+sw/2, cy+sh/2], fill=1)
+        d.rectangle([cx-int(w*0.03), cy-sh/2, cx+int(w*0.03), cy+sh/2], fill=1)
+    elif f['item_type'] == 'gem':
+        gw, gh = int(w*0.40*scale), int(h*0.50*scale)
+        d.polygon([(cx, cy-gh/2), (cx+gw/2, cy), (cx, cy+gh/2), (cx-gw/2, cy)], fill=1)
+    else:  # axe
+        d.rectangle([cx-int(w*0.04), cy-int(h*0.25), cx+int(w*0.04), cy+int(h*0.25)], fill=1)
+        d.polygon([(cx+int(w*0.04), cy-int(h*0.15)), (cx+int(w*0.20), cy),
+                   (cx+int(w*0.04), cy+int(h*0.15))], fill=1)
     
     return np.array(mask, dtype=np.uint8)
 
-def silhouette_plant(w, h, rng):
-    """Árvore / planta: caule + copa"""
+def draw_building(w, h, rng, f):
     mask = Image.new('L', (w, h), 0)
     d = ImageDraw.Draw(mask)
-    cx, cy = w // 2, h // 2
+    cx = w // 2
     
-    # Caule (retângulo vertical)
-    stem_w = int(w * 0.10)
-    stem_h = int(h * 0.35)
-    stem_cy = cy + int(h * 0.15)
-    d.rectangle([cx - stem_w/2, stem_cy - stem_h/2,
-                 cx + stem_w/2, stem_cy + stem_h/2], fill=1)
+    base_w = int(w * f['base_width'])
+    base_h = int(h * f['base_height'])
+    base_cy = h - int(h * 0.15) - base_h // 2
+    d.rectangle([cx-base_w/2, base_cy-base_h/2, cx+base_w/2, base_cy+base_h/2], fill=1)
     
-    # Copa (3 elipses sobrepostas formando nuvem)
-    crown_cy = cy - int(h * 0.10)
-    crown_r = int(min(w, h) * 0.22)
-    offsets = [
-        (cx, crown_cy - int(h * 0.05)),
-        (cx - int(w * 0.12), crown_cy + int(h * 0.02)),
-        (cx + int(w * 0.12), crown_cy + int(h * 0.02)),
-    ]
-    for (ox, oy) in offsets:
-        draw_ellipse(d, ox, oy, crown_r, crown_r * 0.85, fill=1)
+    roof_h = int(h * f['roof_angle'])
+    d.polygon([(cx-base_w/2-int(w*0.05), base_cy-base_h/2),
+               (cx, base_cy-base_h/2-roof_h),
+               (cx+base_w/2+int(w*0.05), base_cy-base_h/2)], fill=1)
+    
+    tower_w = int(w * 0.13)
+    tower_h = int(h * 0.55)
+    tower_count = f['tower_count']
+    if tower_count == 1:
+        positions = [cx]
+    elif tower_count == 2:
+        positions = [cx-base_w/2+tower_w/2, cx+base_w/2-tower_w/2]
+    else:
+        positions = [cx-base_w/2+tower_w/2, cx, cx+base_w/2-tower_w/2]
+    
+    for tx in positions:
+        ty = base_cy - base_h/2 - tower_h/2 + int(h*0.10)
+        d.rectangle([tx-tower_w/2, ty-tower_h/2, tx+tower_w/2, ty+tower_h/2], fill=1)
+        d.polygon([(tx-tower_w/2, ty-tower_h/2), (tx, ty-tower_h/2-int(h*0.10)),
+                   (tx+tower_w/2, ty-tower_h/2)], fill=1)
+    
+    if f['has_flag']:
+        flag_x = positions[0] if tower_count >= 1 else cx
+        flag_y = base_cy - base_h/2 - tower_h - int(h*0.08)
+        d.rectangle([flag_x-1, flag_y, flag_x+1, flag_y+int(h*0.15)], fill=1)
+        d.rectangle([flag_x+1, flag_y, flag_x+int(w*0.08), flag_y+int(h*0.05)], fill=1)
     
     return np.array(mask, dtype=np.uint8)
 
-def silhouette_vehicle(w, h, rng):
-    """Veículo: corpo principal + rodas"""
+def draw_plant(w, h, rng, f):
     mask = Image.new('L', (w, h), 0)
     d = ImageDraw.Draw(mask)
-    cx, cy = w // 2, h // 2
+    cx = w // 2
     
-    # Corpo principal (retângulo grande horizontal)
-    body_w = int(w * 0.70)
-    body_h = int(h * 0.30)
-    d.rectangle([cx - body_w/2, cy - body_h/2,
-                 cx + body_w/2, cy + body_h/2], fill=1)
+    stem_w = int(w * f['stem_width'])
+    stem_h = int(h * 0.30)
+    stem_cy = h - int(h * 0.10) - stem_h // 2
+    d.rectangle([cx-stem_w/2, stem_cy-stem_h/2, cx+stem_w/2, stem_cy+stem_h/2], fill=1)
     
-    # Cabine (retângulo no topo)
-    cab_w = int(w * 0.35)
-    cab_h = int(h * 0.20)
-    cab_cy = cy - body_h/2 - cab_h/2 + int(h * 0.02)
-    d.rectangle([cx - cab_w/2 - int(w * 0.05), cab_cy - cab_h/2,
-                 cx + cab_w/2 - int(w * 0.05), cab_cy + cab_h/2], fill=1)
+    crown_r = int(min(w, h) * f['crown_size'])
+    crown_cy = stem_cy - stem_h/2 - crown_r * 0.4
     
-    # 2 rodas (círculos embaixo)
-    wheel_r = int(min(w, h) * 0.08)
+    if f['crown_shape'] == 'round':
+        d.ellipse([cx-crown_r, crown_cy-crown_r, cx+crown_r, crown_cy+crown_r], fill=1)
+    elif f['crown_shape'] == 'pointed':
+        d.polygon([(cx, crown_cy-crown_r*1.3), (cx+crown_r, crown_cy+crown_r*0.5),
+                   (cx-crown_r, crown_cy+crown_r*0.5)], fill=1)
+    else:  # wide
+        for i in range(f['leaf_count']):
+            angle = (i / f['leaf_count']) * 360
+            lx = cx + int(crown_r * 0.7 * np.cos(np.radians(angle)))
+            ly = crown_cy + int(crown_r * 0.5 * np.sin(np.radians(angle)))
+            d.ellipse([lx-crown_r*0.6, ly-crown_r*0.5, lx+crown_r*0.6, ly+crown_r*0.5], fill=1)
+    
+    return np.array(mask, dtype=np.uint8)
+
+def draw_vehicle(w, h, rng, f):
+    mask = Image.new('L', (w, h), 0)
+    d = ImageDraw.Draw(mask)
+    cx = w // 2
+    cy = h // 2 + int(h * 0.05)
+    
+    body_w = int(w * f['body_width'])
+    body_h = int(h * f['body_height'])
+    d.rectangle([cx-body_w/2, cy-body_h/2, cx+body_w/2, cy+body_h/2], fill=1)
+    
+    if f['has_cabin']:
+        cab_w = int(w * f['cabin_width'])
+        cab_h = int(h * 0.18)
+        cab_cy = cy - body_h/2 - cab_h/2 + int(h*0.02)
+        d.rectangle([cx-cab_w/2-int(w*0.05), cab_cy-cab_h/2, cx+cab_w/2-int(w*0.05), cab_cy+cab_h/2], fill=1)
+    
+    wheel_r = int(min(w, h) * 0.07)
     wheel_y = cy + body_h/2
-    for wx in [cx - int(w * 0.22), cx + int(w * 0.15)]:
-        draw_ellipse(d, wx, wheel_y, wheel_r, wheel_r, fill=1)
+    wheel_count = f['wheel_count']
+    if wheel_count == 2:
+        positions = [cx-int(w*0.22), cx+int(w*0.15)]
+    else:
+        positions = [cx-int(w*0.25), cx-int(w*0.08), cx+int(w*0.05), cx+int(w*0.22)]
+    for wx in positions:
+        d.ellipse([wx-wheel_r, wheel_y-wheel_r, wx+wheel_r, wheel_y+wheel_r], fill=1)
     
     return np.array(mask, dtype=np.uint8)
 
-def silhouette_blob(w, h, rng):
-    """Fallback: elipse simples"""
+def draw_blob(w, h, rng, f):
     mask = Image.new('L', (w, h), 0)
     d = ImageDraw.Draw(mask)
-    cx, cy = w // 2, h // 2
-    rx = int(w * 0.35)
-    ry = int(h * 0.30)
-    draw_ellipse(d, cx, cy, rx, ry, fill=1)
+    cx, cy = w//2, h//2
+    
+    rx = int(w * f['width'])
+    ry = int(h * f['height'])
+    d.ellipse([cx-rx, cy-ry, cx+rx, cy+ry], fill=1)
+    
+    if f['spikes']:
+        for i in range(f['spike_count']):
+            angle = (i / f['spike_count']) * 2 * np.pi
+            sx = cx + int(rx * 1.1 * np.cos(angle))
+            sy = cy + int(ry * 1.1 * np.sin(angle))
+            d.polygon([(sx, sy),
+                       (sx + int(rx*0.15*np.cos(angle+1.5)), sy + int(ry*0.15*np.sin(angle+1.5))),
+                       (sx + int(rx*0.15*np.cos(angle-1.5)), sy + int(ry*0.15*np.sin(angle-1.5)))],
+                      fill=1)
+    
     return np.array(mask, dtype=np.uint8)
 
-ARCHETYPE_BUILDERS = {
-    'creature': silhouette_creature,
-    'character': silhouette_character,
-    'item': silhouette_item,
-    'building': silhouette_building,
-    'plant': silhouette_plant,
-    'vehicle': silhouette_vehicle,
-    'blob': silhouette_blob,
+ARCHETYPE_DRAWERS = {
+    'creature': draw_creature,
+    'character': draw_character,
+    'item': draw_item,
+    'building': draw_building,
+    'plant': draw_plant,
+    'vehicle': draw_vehicle,
+    'blob': draw_blob,
 }
-
-def generate_silhouette(w, h, rng, archetype):
-    """Gera silhueta usando primitivos geométricos, não ruído."""
-    builder = ARCHETYPE_BUILDERS.get(archetype, silhouette_blob)
-    return builder(w, h, rng)
 
 # ============================================================
 # DETALHES (olhos, sombra, highlight)
 # ============================================================
 def compute_details(base_mask, rng, archetype):
     h, w = base_mask.shape
-    
-    # Sombras: metade inferior do corpo + bordas
     ys = np.linspace(0.0, 1.0, h)[:, None] * np.ones((h, w))
-    shadow = (base_mask == 1) & (ys > 0.62)
+    shadow = (base_mask == 1) & (ys > rng.uniform(0.55, 0.70))
+    highlight = (base_mask == 1) & (ys < rng.uniform(0.20, 0.32))
     
-    # Highlight: topo superior
-    highlight = (base_mask == 1) & (ys < 0.25)
-    
-    # Olhos (apenas para creature e character)
     eye_mask = np.zeros_like(base_mask, dtype=bool)
-    if archetype in ('creature', 'character') and rng.random() < 0.95:
-        # Detecta centro horizontal da parte superior da máscara
+    if archetype in ('creature', 'character') and rng.random() < 0.90:
         upper = base_mask.copy()
-        upper[h // 2:, :] = 0
+        upper[h//2:, :] = 0
         cols = np.any(upper > 0, axis=0)
         if np.any(cols):
             left = np.argmax(cols)
             right = w - 1 - np.argmax(cols[::-1])
             center_x = (left + right) // 2
             width_span = right - left
-            
-            # Y dos olhos: ~35% da altura da parte superior
-            rows = np.any(upper > 0, axis=1)
-            row_indices = np.where(rows)[0]
-            if len(row_indices) > 0:
-                eye_y = int(row_indices[0] + (row_indices[-1] - row_indices[0]) * 0.45)
-                eye_offset = int(width_span * 0.15)
-                eye_r = max(1, int(width_span * 0.06))
-                
+            rows = np.where(np.any(upper > 0, axis=1))[0]
+            if len(rows) > 0:
+                eye_y = int(rows[0] + (rows[-1] - rows[0]) * rng.uniform(0.35, 0.50))
+                eye_offset = int(width_span * rng.uniform(0.12, 0.20))
+                eye_r = max(1, int(width_span * rng.uniform(0.05, 0.08)))
                 for ex in [center_x - eye_offset, center_x + eye_offset]:
-                    y0 = max(0, eye_y - eye_r)
-                    y1 = min(h, eye_y + eye_r + 1)
-                    x0 = max(0, ex - eye_r)
-                    x1 = min(w, ex + eye_r + 1)
+                    y0, y1 = max(0, eye_y-eye_r), min(h, eye_y+eye_r+1)
+                    x0, x1 = max(0, ex-eye_r), min(w, ex+eye_r+1)
                     for yy in range(y0, y1):
                         for xx in range(x0, x1):
-                            if (xx - ex)**2 + (yy - eye_y)**2 <= eye_r**2:
+                            if (xx-ex)**2 + (yy-eye_y)**2 <= eye_r**2:
                                 eye_mask[yy, xx] = True
     
-    # Remover sobreposições
     highlight = highlight & ~eye_mask
     shadow = shadow & ~eye_mask & ~highlight
-    
     return shadow.astype(np.uint8), highlight.astype(np.uint8), eye_mask.astype(np.uint8)
 
 # ============================================================
-# OUTLINE
+# OUTLINE + DITHER + QUANTIZE
 # ============================================================
 def apply_outline(img_rgb, base_mask, outline_color, thickness=1):
-    struct = np.ones((3, 3), dtype=bool)
+    struct = np.ones((3,3), dtype=bool)
     dilated = ndimage.binary_dilation(base_mask.astype(bool), struct, iterations=thickness)
     outline = dilated & ~base_mask.astype(bool)
     result = img_rgb.copy()
     result[outline] = outline_color
     return result
 
-# ============================================================
-# DITHER + QUANTIZAÇÃO
-# ============================================================
 def apply_dither_and_quantize(img_rgb, palette_hex, dither_name):
     palette = np.array([hex_to_rgb(c) for c in palette_hex], dtype=float)
     h, w, _ = img_rgb.shape
     img_f = img_rgb.astype(float)
-    
     mat = DITHER_MATRICES.get(dither_name)
+    
     if mat is None:
         flat = img_f.reshape(-1, 3)
         diff = flat[:, None, :] - palette[None, :, :]
-        idx = np.argmin(np.sum(diff * diff, axis=2), axis=1)
+        idx = np.argmin(np.sum(diff*diff, axis=2), axis=1)
         return palette[idx].reshape(h, w, 3).astype(np.uint8)
     
     mh, mw = mat.shape
-    th = np.tile(mat, (int(np.ceil(h / mh)), int(np.ceil(w / mw))))[:h, :w]
-    dither_scale = 32.0  # menor que antes para menos ruído
-    perturbed = img_f + th[..., None] * dither_scale
-    perturbed = np.clip(perturbed, 0.0, 255.0)
-    
+    th = np.tile(mat, (int(np.ceil(h/mh)), int(np.ceil(w/mw))))[:h, :w]
+    perturbed = np.clip(img_f + th[..., None] * 32.0, 0, 255)
     flat = perturbed.reshape(-1, 3)
     diff = flat[:, None, :] - palette[None, :, :]
-    dist = np.sum(diff * diff, axis=2)
-    idx = np.argmin(dist, axis=1)
+    idx = np.argmin(np.sum(diff*diff, axis=2), axis=1)
     return palette[idx].reshape(h, w, 3).astype(np.uint8)
 
 # ============================================================
@@ -535,48 +517,40 @@ def apply_dither_and_quantize(img_rgb, palette_hex, dither_name):
 # ============================================================
 def generate_pixel_art(prompt, width=64, height=64, palette_size=16,
                        dithering='none', outline='none', style='auto',
-                       seed=0, scale=1, archetype=None):
+                       seed=0, scale=1, archetype=None, variation='medium'):
     rng = make_rng(seed_from_prompt(prompt, seed))
     
-    # 1) Paleta
     if style == 'auto' or style not in STYLES:
         available = list(STYLES.keys())
-        style = available[seed_from_prompt(prompt, 0) % len(available)]
+        style = available[seed_from_prompt(prompt, seed) % len(available)]
     palette = list(STYLES[style])
     while len(palette) < max(4, palette_size):
         palette.append(palette[len(palette) % len(STYLES[style])])
     palette = palette[:max(4, palette_size)]
     
-    # 2) Archetype
     if archetype is None:
         archetype = detect_archetype(prompt)
     
-    # 3) Silhueta (geométrica, não noise!)
-    base_mask = generate_silhouette(width, height, rng, archetype)
+    # FEATURES MUTÁVEIS — cada seed gera forma diferente!
+    features = roll_features(rng, archetype, variation)
+    drawer = ARCHETYPE_DRAWERS.get(archetype, draw_blob)
+    base_mask = drawer(width, height, rng, features)
     
-    # 4) Detalhes
     shadow, highlight, eyes = compute_details(base_mask, rng, archetype)
     
-    # 5) Cores:
-    #    paleta[0] = cor mais escura (fundo + olhos)
-    #    paleta[1] = sombra
-    #    paleta[2] = base do corpo
-    #    paleta[-1] = highlight
     bg_color        = hex_to_rgb(palette[0])
     shadow_color    = hex_to_rgb(palette[1 % len(palette)])
     base_color      = hex_to_rgb(palette[2 % len(palette)])
     highlight_color = hex_to_rgb(palette[-1])
     eye_color       = hex_to_rgb(palette[0])
     
-    # 6) Monta imagem
     img = np.full((height, width, 3), bg_color, dtype=np.uint8)
     body = (base_mask == 1) & (shadow == 0) & (highlight == 0) & (eyes == 0)
-    img[body]          = base_color
-    img[shadow == 1]   = shadow_color
-    img[highlight == 1]= highlight_color
-    img[eyes == 1]     = eye_color
+    img[body] = base_color
+    img[shadow == 1] = shadow_color
+    img[highlight == 1] = highlight_color
+    img[eyes == 1] = eye_color
     
-    # 7) Outline (opcional)
     if outline not in (None, 'none', 'None', '', 'off', 'false'):
         if outline == 'black':    oc = (0, 0, 0)
         elif outline == 'white':  oc = (255, 255, 255)
@@ -586,18 +560,16 @@ def generate_pixel_art(prompt, width=64, height=64, palette_size=16,
             except: oc = (0, 0, 0)
         img = apply_outline(img, base_mask, oc, thickness=1)
     
-    # 8) Dither + quantização
     img = apply_dither_and_quantize(img, palette, dithering)
     
-    # 9) Scale
     if scale and int(scale) > 1:
-        pil = Image.fromarray(img)
-        pil = pil.resize((width * int(scale), height * int(scale)), Image.NEAREST)
+        pil = Image.fromarray(img).resize((width*int(scale), height*int(scale)), Image.NEAREST)
     else:
         pil = Image.fromarray(img)
     
     pil.info['style'] = style
     pil.info['archetype'] = archetype
+    pil.info['variation'] = variation
     return pil
 
 # ============================================================
@@ -615,10 +587,10 @@ def batch_generate(prompt, count=1, **kwargs):
 # CLI
 # ============================================================
 def main():
-    print("🎨 PIXEL ART AI GENERATOR v2")
+    print("🎨 PIXEL ART AI GENERATOR v3 — com mutação de características")
     print("=" * 60)
     
-    parser = argparse.ArgumentParser(description="Gera pixel art procedural com silhuetas compostas")
+    parser = argparse.ArgumentParser()
     parser.add_argument('--prompt', required=True)
     parser.add_argument('--width', type=int, default=64)
     parser.add_argument('--height', type=int, default=64)
@@ -629,24 +601,23 @@ def main():
     parser.add_argument('--count', type=int, default=1)
     parser.add_argument('--style', default='auto', choices=list(STYLES.keys()) + ['auto'])
     parser.add_argument('--batch', action='store_true')
-    parser.add_argument('--archetype', default=None, choices=list(ARCHETYPE_BUILDERS.keys()) + [None])
+    parser.add_argument('--archetype', default=None, choices=list(ARCHETYPE_DRAWERS.keys()) + [None])
+    parser.add_argument('--variation', default='medium', choices=['low', 'medium', 'heavy'],
+                        help="low=varia pouco, medium=equilibrado, heavy=máxima variação")
     parser.add_argument('--outdir', default='pixel_art_output')
     parser.add_argument('--seed', type=int, default=None)
     args = parser.parse_args()
     
     os.makedirs(args.outdir, exist_ok=True)
     
-    kwargs = dict(
-        width=args.width, height=args.height,
-        palette_size=args.palette_size,
-        dithering=args.dithering, outline=args.outline,
-        style=args.style, scale=args.scale,
-    )
+    kwargs = dict(width=args.width, height=args.height,
+                  palette_size=args.palette_size, dithering=args.dithering,
+                  outline=args.outline, style=args.style, scale=args.scale,
+                  variation=args.variation)
     if args.archetype is not None:
         kwargs['archetype'] = args.archetype
     
-    use_batch = args.batch or args.count > 1
-    if use_batch:
+    if args.batch or args.count > 1:
         images = batch_generate(args.prompt, count=args.count, **kwargs)
     else:
         if args.seed is not None:
@@ -654,28 +625,18 @@ def main():
         images = [generate_pixel_art(args.prompt, **kwargs)]
     
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-    safe_prompt = "".join(c for c in (args.prompt or '') if c.isalnum() or c in ' _-')
-    safe_prompt = safe_prompt.strip().replace(' ', '_')[:40] or 'pixel'
+    safe_prompt = "".join(c for c in (args.prompt or '') if c.isalnum() or c in ' _-').strip().replace(' ', '_')[:40] or 'pixel'
     
-    paths = []
     for i, img in enumerate(images):
         style_used = img.info.get('style', args.style)
-        arch_used  = img.info.get('archetype', '?')
+        arch_used = img.info.get('archetype', '?')
         fname = f"{safe_prompt}_{style_used}_{arch_used}_{ts}_{i:03d}.png"
         path = os.path.join(args.outdir, fname)
         img.save(path, optimize=True)
-        paths.append(path)
         print(f"  ✓ [{i+1}/{len(images)}] {fname}  (style={style_used}, arch={arch_used})")
     
     print(f"\n✨ {len(images)} imagem(ns) gerada(s) em '{args.outdir}/'")
-    return paths
+    return [os.path.join(args.outdir, f) for f in os.listdir(args.outdir) if f.endswith('.png')]
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n⛔ cancelado")
-        sys.exit(130)
-    except Exception as e:
-        print(f"❌ erro: {e}", file=sys.stderr)
-        raise
+    main()
