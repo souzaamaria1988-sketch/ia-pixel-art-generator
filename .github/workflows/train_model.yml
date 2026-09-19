@@ -1,0 +1,71 @@
+name: 🎓 Treinar Modelo Pixel Art
+
+on:
+  workflow_dispatch:
+    inputs:
+      epochs:
+        description: 'Épocas (1000 padrão, 500 fast, 2500 completo)'
+        required: false
+        type: choice
+        default: '1000'
+        options: ['500','1000','2500','5000']
+      num_experts:
+        description: 'Experts'
+        required: false
+        type: choice
+        default: '64'
+        options: ['16','32','64']
+      fast_mode:
+        description: 'Modo rápido (early stop)'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  train:
+    name: 🎓 Treinar MoE (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      EPOCHS: ${{ inputs.epochs }}
+      NUM_EXPERTS: ${{ inputs.num_experts }}
+      FAST_MODE: ${{ inputs.fast_mode }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 📦 Dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: 🎓 Treinar
+        run: |
+          mkdir -p models/layers pixel_art_input
+          FAST_FLAG=""
+          if [ "$FAST_MODE" = "true" ]; then FAST_FLAG="--fast"; fi
+          python train.py --epochs $EPOCHS --num-experts $NUM_EXPERTS $FAST_FLAG
+      - name: 💾 Commit e Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add models/
+          if ! git diff --cached --quiet; then
+            git commit -m "🎓 Treinar modelo: $EPOCHS épocas [$NUM_EXPERTS experts]"
+            git pull --rebase origin ${{ github.ref_name }} || true
+            git push
+          fi
+      - name: 📤 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-${{ github.run_number }}
+          path: models/
+          retention-days: 90
