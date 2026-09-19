@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       prompt:
-        description: 'Prompt em PT-BR (ex: "herói com espada estilo NES")'
+        description: 'Prompt em PT-BR'
         required: true
         type: string
       style:
@@ -12,7 +12,7 @@ on:
         required: false
         type: choice
         default: 'auto'
-        options: [auto, nes_8bit, snes_16bit, gameboy, gba, cga, modern_pixel, isometric, topdown, character_sprite, tileset_terrain, tileset_dungeon, cyberpunk_pixel, fantasy_pixel, space_pixel, horror_pixel]
+        options: [auto, nes_8bit, snes_16bit, gameboy, gba, cga, modern_pixel, isometric, topdown, character_sprite, tileset_terrain, cyberpunk_pixel, fantasy_pixel, space_pixel, horror_pixel]
       width:
         description: 'Largura'
         required: false
@@ -26,7 +26,7 @@ on:
         default: '64'
         options: ['16','32','64','128','256']
       palette_size:
-        description: 'Cores na paleta'
+        description: 'Cores'
         required: false
         type: choice
         default: '16'
@@ -44,7 +44,7 @@ on:
         default: 'none'
         options: [none, dark, light, auto]
       scale:
-        description: 'Escala final'
+        description: 'Escala'
         required: false
         type: choice
         default: '4'
@@ -55,6 +55,12 @@ on:
         type: choice
         default: '1'
         options: ['1','2','3','5']
+      noise_scale:
+        description: 'Criatividade'
+        required: false
+        type: choice
+        default: '1.0'
+        options: ['0.5','0.75','1.0','1.25','1.5','2.0']
 
 permissions:
   contents: write
@@ -74,6 +80,7 @@ jobs:
       OUTLINE: ${{ inputs.outline }}
       SCALE: ${{ inputs.scale }}
       COUNT: ${{ inputs.count }}
+      NOISE_SCALE: ${{ inputs.noise_scale }}
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
@@ -88,15 +95,23 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+      - name: 🔍 Verificar modelo
+        run: |
+          if [ -f "models/checkpoints/latest.npz" ]; then
+            echo "✅ Modelo treinado encontrado!"
+            ls -lh models/checkpoints/
+          else
+            echo "⚠️ Sem modelo treinado - usando pesos aleatórios"
+          fi
       - name: 🎨 Gerar
         run: |
-          mkdir -p pixel_art_output models/layers
+          mkdir -p pixel_art_output models/checkpoints
           STYLE_ARG=""
           if [ "$STYLE" != "auto" ]; then STYLE_ARG="--style $STYLE"; fi
           python pixel_art_generator.py --batch --prompt "$PROMPT" \
             --width $WIDTH --height $HEIGHT --palette-size $PALETTE_SIZE \
             --dithering $DITHERING --outline $OUTLINE --scale $SCALE \
-            --count $COUNT $STYLE_ARG
+            --count $COUNT --noise-scale $NOISE_SCALE $STYLE_ARG
       - name: 💾 Commit e Push
         run: |
           git config user.name "github-actions[bot]"
