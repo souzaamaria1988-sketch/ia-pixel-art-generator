@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-🧠 TREINAMENTO AUTOENCODER CONDICIONAL - PIXEL ART
-Backpropagation real em numpy puro
-"""
+"""🧠 TREINAMENTO AUTOENCODER CONDICIONAL - PIXEL ART (CORRIGIDO)"""
 import os, json, time, argparse, gc
 from pathlib import Path
 import numpy as np
@@ -22,12 +19,10 @@ PATCH_SIZE = 8
 class Adam:
     def __init__(self, lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8):
         self.lr, self.beta1, self.beta2, self.eps = lr, beta1, beta2, eps
-        self.t = 0
-        self.m, self.v = {}, {}
+        self.t = 0; self.m, self.v = {}, {}
     def update(self, name, param, grad):
         if name not in self.m:
-            self.m[name] = np.zeros_like(param)
-            self.v[name] = np.zeros_like(param)
+            self.m[name] = np.zeros_like(param); self.v[name] = np.zeros_like(param)
         self.t += 1
         self.m[name] = self.beta1 * self.m[name] + (1 - self.beta1) * grad
         self.v[name] = self.beta2 * self.v[name] + (1 - self.beta2) * (grad ** 2)
@@ -43,9 +38,12 @@ def relu_grad(x): return (x > 0).astype(np.float32)
 class ConditionalAutoencoder:
     def __init__(self, seed=42):
         rng = np.random.RandomState(seed)
-        s_enc = np.sqrt(2.0 / (INPUT_DIM + CONDITION_DIM + HIDDEN_DIM))
+        # ✅ CORREÇÃO: usar INPUT_DIM + INPUT_DIM (não CONDITION_DIM)
+        # porque cond_proj é projetada de CONDITION_DIM para INPUT_DIM
+        s_enc = np.sqrt(2.0 / (INPUT_DIM + INPUT_DIM + HIDDEN_DIM))
         s_dec = np.sqrt(2.0 / (LATENT_DIM + HIDDEN_DIM))
-        self.W_enc1 = (rng.randn(INPUT_DIM + CONDITION_DIM, HIDDEN_DIM) * s_enc).astype(np.float32)
+        # ✅ CORREÇÃO: shape (INPUT_DIM*2, HIDDEN_DIM) = (512, 512)
+        self.W_enc1 = (rng.randn(INPUT_DIM + INPUT_DIM, HIDDEN_DIM) * s_enc).astype(np.float32)
         self.b_enc1 = np.zeros(HIDDEN_DIM, dtype=np.float32)
         self.W_enc2 = (rng.randn(HIDDEN_DIM, LATENT_DIM) * s_enc).astype(np.float32)
         self.b_enc2 = np.zeros(LATENT_DIM, dtype=np.float32)
@@ -57,22 +55,22 @@ class ConditionalAutoencoder:
         self.opt = Adam(lr=0.001)
 
     def encode(self, x, cond):
+        # cond (batch, 64) @ W_cond (64, 256) -> (batch, 256)
         cond_proj = cond @ self.W_cond
+        # x (batch, 256) + cond_proj (batch, 256) -> (batch, 512)
         x_cond = np.concatenate([x, cond_proj], axis=-1)
-        h1_pre = x_cond @ self.W_enc1 + self.b_enc1
+        h1_pre = x_cond @ self.W_enc1 + self.b_enc1  # (batch, 512) @ (512, 512) ✓
         h1 = tanh(h1_pre)
         z_pre = h1 @ self.W_enc2 + self.b_enc2
         z = tanh(z_pre)
-        cache = {'x_cond': x_cond, 'h1_pre': h1_pre, 'h1': h1, 'z_pre': z_pre, 'z': z}
-        return z, cache
+        return z, {'x_cond': x_cond, 'h1_pre': h1_pre, 'h1': h1, 'z_pre': z_pre, 'z': z}
 
     def decode(self, z):
         h1_pre = z @ self.W_dec1 + self.b_dec1
         h1 = relu(h1_pre)
         out_pre = h1 @ self.W_dec2 + self.b_dec2
         out = tanh(out_pre)
-        cache = {'z': z, 'h1_pre': h1_pre, 'h1': h1, 'out_pre': out_pre, 'out': out}
-        return out, cache
+        return out, {'z': z, 'h1_pre': h1_pre, 'h1': h1, 'out_pre': out_pre, 'out': out}
 
     def forward(self, x, cond):
         z, enc = self.encode(x, cond)
@@ -143,8 +141,7 @@ def generate_dataset(n_samples=5000, seed=123):
         pal = palettes[style_idx]
         patch = np.zeros((PATCH_SIZE, PATCH_SIZE, 3), dtype=np.float32)
         ptype = rng.randint(0, 8)
-        if ptype == 0:
-            patch[:] = pal[rng.randint(0, len(pal))]
+        if ptype == 0: patch[:] = pal[rng.randint(0, len(pal))]
         elif ptype == 1:
             for x in range(PATCH_SIZE): patch[:, x] = pal[x % len(pal)]
         elif ptype == 2:
@@ -155,13 +152,11 @@ def generate_dataset(n_samples=5000, seed=123):
             c = pal[0]
             for _ in range(PATCH_SIZE * PATCH_SIZE):
                 if 0 <= y < PATCH_SIZE and 0 <= x < PATCH_SIZE: patch[y, x] = c
-                dy, dx = rng.randint(-1, 2, 2)
-                y, x = y + dy, x + dx
+                dy, dx = rng.randint(-1, 2, 2); y, x = y + dy, x + dx
                 if rng.random() < 0.15: c = pal[rng.randint(0, len(pal))]
         elif ptype == 4:
             for y in range(PATCH_SIZE):
-                t = y / (PATCH_SIZE - 1)
-                patch[y, :] = pal[0] * (1 - t) + pal[-1] * t
+                t = y / (PATCH_SIZE - 1); patch[y, :] = pal[0] * (1 - t) + pal[-1] * t
         elif ptype == 5:
             for y in range(PATCH_SIZE):
                 for x in range(PATCH_SIZE):
@@ -178,7 +173,8 @@ def generate_dataset(n_samples=5000, seed=123):
         patch_norm = patch * 2.0 - 1.0
         hist = np.histogram(patch.reshape(-1, 3), bins=16, range=(0, 1))[0]
         hist = hist / (hist.sum() + 1e-8)
-        stats = np.array([patch.mean(), patch.std(), patch.min(), patch.max(), np.unique(patch.reshape(-1,3),axis=0).shape[0]/64.0])
+        stats = np.array([patch.mean(), patch.std(), patch.min(), patch.max(),
+                          np.unique(patch.reshape(-1,3),axis=0).shape[0]/64.0])
         feat = np.concatenate([hist, stats]).astype(np.float32)
         if len(feat) < INPUT_DIM: feat = np.pad(feat, (0, INPUT_DIM - len(feat)))
         cond = np.zeros(CONDITION_DIM, dtype=np.float32)
@@ -186,48 +182,39 @@ def generate_dataset(n_samples=5000, seed=123):
         cond[10 + style_idx] = rng.randn() * 0.1
         cond[20 + (ptype % 8)] = 0.5
         X.append(feat[:INPUT_DIM]); Y.append(patch_norm.reshape(-1)); C.append(cond)
-    X = np.array(X, dtype=np.float32); Y = np.array(Y, dtype=np.float32); C = np.array(C, dtype=np.float32)
-    print(f"   ✓ Dataset: X{X.shape} Y{Y.shape} C{C.shape}")
-    return X, Y, C
+    return np.array(X, dtype=np.float32), np.array(Y, dtype=np.float32), np.array(C, dtype=np.float32)
 
 def train(epochs=10000, batch_size=64, save_every=1000, seed=42, resume=False):
     print("="*70); print("🧠 TREINAMENTO AUTOENCODER - PIXEL ART"); print("="*70)
-    np.random.seed(seed)
-    t0 = time.time()
+    np.random.seed(seed); t0 = time.time()
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     X, Y, C = generate_dataset(5000, seed=123)
+    print(f"   ✓ Dataset: X{X.shape} Y{Y.shape} C{C.shape}")
     model = ConditionalAutoencoder(seed=seed)
     total_params = sum(p.size for p in [model.W_enc1, model.b_enc1, model.W_enc2, model.b_enc2,
                                          model.W_dec1, model.b_dec1, model.W_dec2, model.b_dec2, model.W_cond])
     print(f"🧮 Parâmetros: {total_params:,}")
     print(f"🎯 Épocas: {epochs} | Batch: {batch_size}")
-    start_epoch = 1
-    losses = []
-    best_loss = float('inf')
+    start_epoch, losses, best_loss = 1, [], float('inf')
     if resume:
         latest = CHECKPOINT_DIR / "latest.npz"
         if latest.exists():
             start_epoch, prev_loss = model.load(latest)
-            start_epoch += 1
-            best_loss = prev_loss
+            start_epoch += 1; best_loss = prev_loss
             print(f"📂 Retomando do epoch {start_epoch - 1} (loss {prev_loss:.5f})")
     for epoch in range(start_epoch, epochs + 1):
         idx = np.random.permutation(len(X))
-        epoch_loss = 0.0
-        n_batches = 0
+        epoch_loss, n_batches = 0.0, 0
         for i in range(0, len(X), batch_size):
             b_idx = idx[i:i + batch_size]
-            xb, yb, cb = X[b_idx], Y[b_idx], C[b_idx]
-            loss = model.train_step(xb, cb, yb)
-            epoch_loss += loss
-            n_batches += 1
+            loss = model.train_step(X[b_idx], C[b_idx], Y[b_idx])
+            epoch_loss += loss; n_batches += 1
         avg_loss = epoch_loss / max(1, n_batches)
         losses.append(avg_loss)
         if avg_loss < best_loss: best_loss = avg_loss
         if epoch % 100 == 0 or epoch == 1 or epoch == epochs:
-            dt = time.time() - t0
-            eta = dt / epoch * (epochs - epoch)
+            dt = time.time() - t0; eta = dt / epoch * (epochs - epoch)
             print(f"   📊 Epoch {epoch:5d}/{epochs} | loss={avg_loss:.5f} | best={best_loss:.5f} | {dt:.0f}s (ETA {eta:.0f}s)")
         if epoch % save_every == 0 or epoch == epochs:
             ckpt = CHECKPOINT_DIR / f"model_epoch_{epoch:05d}.npz"
@@ -249,7 +236,7 @@ def train(epochs=10000, batch_size=64, save_every=1000, seed=42, resume=False):
                 "epochs": epochs, "training_time_seconds": int(time.time() - t0)}
     with open(TRAINING_LOG, "w") as f: json.dump(log_data, f, indent=2)
     print(f"\n✅ Treino completo em {time.time()-t0:.0f}s ({(time.time()-t0)/60:.1f} min)")
-    print(f"   Loss final: {losses[-1]:.5f}" if losses else "   Sem losses")
+    if losses: print(f"   Loss final: {losses[-1]:.5f}")
     print(f"   Melhor loss: {best_loss:.5f}")
     print(f"   Modelo: {CHECKPOINT_DIR/'latest.npz'}")
 
