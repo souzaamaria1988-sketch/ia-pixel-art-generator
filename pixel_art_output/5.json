@@ -1,0 +1,31 @@
+{
+  "prompt": "Ii",
+  "config": {
+    "style": "modern_pixel",
+    "palette": "nes",
+    "palette_size": 16,
+    "dithering": "bayer4x4",
+    "outline": "none",
+    "subject": null,
+    "scene": null,
+    "category": null
+  },
+  "tags": [],
+  "rag_matches": [],
+  "model_epoch": 25000,
+  "model_loss": 0.024345974926836787,
+  "model_trained": true,
+  "seed": 1728997998,
+  "noise_scale": 1.5,
+  "coherence": 0.3,
+  "palette_name": "nes",
+  "palette_size": 16,
+  "dithering": "bayer4x4",
+  "outline": "none",
+  "timestamp": "2026-09-19T22:57:26.809066",
+  "resolution": [
+    64,
+    64
+  ],
+  "scale": 8
+}
