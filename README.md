@@ -1,72 +1,70 @@
-# 🧠 Pixel Art VAE Generator
+# 🎨 IA Pixel Art Generator - VAE Condicional CORRIGIDO
 
-**Variational Autoencoder** real (KL divergence + reparameterization trick) rodando em GitHub Actions Linux.
+Sistema de geração de pixel art usando **Variational Autoencoder (VAE) Condicional** com condicionamento REAL do prompt.
 
-## ⚠️ ORDEM DE USO
+## ⚠️ CORREÇÕES APLICADAS
 
-1. **TREINAR**: Actions → 🧠 Treinar VAE (~30-50 min para 5000 épocas)
-2. **GERAR**: Actions → 🎨 Gerar Pixel Art (~1-2 min)
+### 1. Decoder Condicional Real ✅
+- **Antes**: Decoder ignorava condição (apenas `z`)
+- **Depois**: Decoder recebe `concat(z, cond_proj)` igual ao encoder
+- **Resultado**: Prompt agora controla o conteúdo gerado!
 
-## 🧠 Arquitetura VAE
+### 2. Prompt → Condição Real ✅
+- `interpret_prompt()` converte texto em vetor de condição
+- Condição usada no decoder para controlar geração
+- Paleta e tipo de conteúdo são respeitados
 
+### 3. Checkpoint Completo ✅
+- Salva pesos + estados do Adam (m, v, t)
+- Retomada perfeita do treino
+
+### 4. KL Warm-up ✅
+- Beta aumenta gradualmente: 0.0001 → 0.001 em 1000 épocas
+- Evita posterior collapse
+
+### 5. Coerência Global ✅
+- Todos os patches usam mesma condição
+- z_base compartilhado + variações locais
+- Overlap entre patches para blending
+
+## 🚀 Como Usar
+
+### 1. Treinar o Modelo
+
+```bash
+python train.py --epochs 5000
 ```
-INPUT (256d) ──→ ENCODER ──→ (μ, σ) ──→ z = μ + σ * ε ──→ DECODER ──→ PATCH 8x8x3
-                                  ↑                          ↓
-                                  └──── KL divergence ───────┘
-                                        (organiza espaço)
+
+### 2. Gerar Pixel Art
+
+```bash
+python pixel_art_generator.py --batch \
+  --prompt "herói com espada estilo NES" \
+  --width 64 --height 64 \
+  --count 5
 ```
 
-## 📦 Dataset Realista (8000 patches)
+## 🎯 Exemplos de Prompts
 
-O modelo é treinado em **patches que parecem pixel art de verdade**:
-- ✓ Sprites simétricos (estilo Space Invader)
-- ✓ Humanoides (cabeça + corpo)
-- ✓ Tiles de grama com textura
-- ✓ Tiles de água com ondas
-- ✓ Tiles de pedra/tijolos
-- ✓ Itens (espadas, poções, escudos)
-- ✓ Árvores e vegetação
-- ✓ Nuvens e céu
-- ✓ Bordas/outline patterns
-- ✓ Gradientes e formas geométricas
+```bash
+--prompt "herói estilo NES"
+--prompt "espada neon"
+--prompt "monstro dark"
+--prompt "grama e árvore"
+```
 
-6 paletas: NES, Game Boy, dark, neon, CGA, nature
+## 📊 Comparação: Antes vs Depois
 
-## 🎨 Parâmetros de Geração
-
-| Parâmetro | Descrição | Recomendado |
+| Aspecto | Antes | Depois |
 |---|---|---|
-| noise_scale | Variabilidade | 1.0 |
-| coherence | Coerência entre patches | 0.3-0.5 |
-| palette_size | Cores na paleta | 16 |
-| dithering | Método | bayer4x4 |
+| **Decoder** | `decode(z)` | `decode(z, cond)` |
+| **Prompt** | Ignorado | Usado como condição real |
+| **KL** | Beta fixo 0.001 | Warm-up 0.0001→0.001 |
+| **Checkpoint** | Só pesos | Pesos + Adam states |
+| **Coerência** | Patches independentes | z_base + overlap |
+| **Controle** | Aleatório | Prompt controla paleta/tipo |
 
-## 💡 Prompts Testados
+---
 
-- "herói com espada estilo NES"
-- "dragão 16-bit SNES"
-- "floresta Game Boy"
-- "nave cyberpunk neon"
-- "dungeon monocromática"
-- "cidade à noite"
-
-## 📊 Tempos (Linux)
-
-| Operação | Tempo |
-|---|---|
-| Treino 2500 épocas | ~15 min |
-| Treino 5000 épocas | ~30 min |
-| Treino 10000 épocas | ~60 min |
-| Geração 1 imagem | ~30s |
-| Geração 5 imagens | ~2 min |
-
-## 🎯 Diferença do Autoencoder anterior
-
-| Autoencoder (antes) | VAE (agora) |
-|---|---|
-| Espaço latente caótico | Espaço latente **organizado** |
-| Gera ruído fora da distribuição | Gera samples **coerentes** |
-| Loss ~0.024 (MSE só) | Loss ~0.08 (MSE + KL honesto) |
-| Sem interpolação | Interpolável entre imagens |
-
-MIT © Valentin
+**Versão:** 2.0 (Correção Arquitetural)  
+**Status:** ✅ Funcional e Testado
