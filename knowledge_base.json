@@ -16,7 +16,7 @@
     {"id":11,"tags":["inimigo","enemy","monstro","mob"],"style":"enemy_sprite","palette":"nes","palette_size":16,"dithering":"bayer2x2","outline":"dark","resolution":[32,32],"description":"Inimigo"},
     {"id":12,"tags":["tileset","terreno","grama","água"],"style":"tileset_terrain","palette":"nes","palette_size":16,"dithering":"bayer2x2","outline":"none","resolution":[128,128],"description":"Tileset terreno"},
     {"id":13,"tags":["dungeon","caverna","masmorra"],"style":"tileset_dungeon","palette":"dark","palette_size":16,"dithering":"bayer4x4","outline":"dark","resolution":[128,128],"description":"Tileset dungeon"},
-    {"id":14,"tags":["dragão","dragon","fogo"],"style":"enemy_sprite","palette":"nes","palette_size":32,"dithering":"bayer4x4","outline":"dark","resolution":[64,64],"description":"Dragão"},
+    {"id":14,"tags":["dragão","dragon","fogo"],"style":"enemy_sprite","palette":"nes","palette_size":32,"dithering":"bayer4x4","outline":"dark","resolution":[64,64],"description":"Dragao"},
     {"id":15,"tags":["slime","verde","simples"],"style":"enemy_sprite","palette":"nes","palette_size":8,"dithering":"bayer2x2","outline":"dark","resolution":[32,32],"description":"Slime"}
   ],
   "palettes": {
@@ -28,6 +28,7 @@
     "dark": ["#0A0A0A","#1A1A1A","#2C2C2C","#3D3D3D","#4F4F4F","#1A0000","#2A0000","#3A0000","#00001A","#00002A","#00003A","#1A001A","#2A002A","#3A003A","#0A1A0A","#1A2A1A"],
     "bright": ["#FFFFFF","#FFFFAA","#AAFFFF","#FFAAFF","#AAFFAA","#FFAAAA","#AAAAFF","#FFCC00","#00CCFF","#FF00CC","#00FFCC","#CCFF00","#CC00FF","#00FF00","#FF0000","#0000FF"],
     "pastel": ["#FFD1DC","#FFB7C5","#FDFD96","#B5EAD7","#C7CEEA","#E2F0CB","#FFDAC1","#B5D8EB","#F0E6FF","#FFE4E1","#DCD0FF","#C1E1C1","#FFEBCD","#E0FFFF","#F5DEB3","#FFFACD"],
-    "sepia": ["#3B2414","#6B4423","#A67B5B","#D4A574","#E8C8A0","#F5E6D3","#F8F0E3","#FFFFFF"]
+    "sepia": ["#3B2414","#6B4423","#A67B5B","#D4A574","#E8C8A0","#F5E6D3","#F8F0E3","#FFFFFF"],
+    "nature": ["#2C7B2C","#4CA84C","#6BC86B","#8B5A2B","#A0826F","#E8C170","#1A5A1A","#3A8A3A","#5AAA5A","#7ACA7A"]
   }
 }
