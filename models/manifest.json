@@ -88,7 +88,7 @@
     "color_harmony_expert"
   ],
   "quantization": "int8",
-  "trained_at": "2026-09-19T18:54:52.564049",
-  "training_time_seconds": 211,
+  "trained_at": "2026-09-19T18:58:47.567151",
+  "training_time_seconds": 151,
   "runner": "ubuntu-latest"
 }
