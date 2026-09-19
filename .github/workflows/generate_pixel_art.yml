@@ -12,25 +12,25 @@ on:
         required: false
         type: choice
         default: 'auto'
-        options: [auto, nes_8bit, snes_16bit, gameboy, gba, cga, modern_pixel, isometric, cyberpunk_pixel, fantasy_pixel, space_pixel, horror_pixel]
+        options: [auto, nes_8bit, snes_16bit, gameboy, cyberpunk_pixel, fantasy_pixel, horror_pixel, medieval_pixel, modern_pixel]
       width:
         description: 'Largura'
         required: false
         type: choice
         default: '64'
-        options: ['16','32','64','128','256']
+        options: ['32','64','70','100','128']
       height:
         description: 'Altura'
         required: false
         type: choice
         default: '64'
-        options: ['16','32','64','128','256']
+        options: ['32','64','70','100','128']
       palette_size:
         description: 'Cores'
         required: false
         type: choice
         default: '16'
-        options: ['2','4','8','16','32','64']
+        options: ['2','4','8','16','32']
       dithering:
         description: 'Dithering'
         required: false
@@ -56,17 +56,23 @@ on:
         default: '1'
         options: ['1','2','3','5']
       noise_scale:
-        description: 'Variabilidade (0.5-1.5 recomendado)'
+        description: 'Variabilidade'
         required: false
         type: choice
         default: '1.0'
-        options: ['0.5','0.75','1.0','1.25','1.5','2.0']
+        options: ['0.5','0.75','1.0','1.25','1.5']
       coherence:
-        description: 'Coerência entre patches (0-1)'
+        description: 'Coerencia'
         required: false
         type: choice
         default: '0.3'
         options: ['0.0','0.1','0.3','0.5','0.7','0.9']
+      overlap:
+        description: 'Overlap entre patches'
+        required: false
+        type: choice
+        default: '2'
+        options: ['0','1','2','3','4']
 
 permissions:
   contents: write
@@ -88,6 +94,7 @@ jobs:
       COUNT: ${{ inputs.count }}
       NOISE_SCALE: ${{ inputs.noise_scale }}
       COHERENCE: ${{ inputs.coherence }}
+      OVERLAP: ${{ inputs.overlap }}
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
@@ -98,17 +105,17 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: 📦 Dependências
+      - name: 📦 Dependencias
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
       - name: 🔍 Verificar VAE
         run: |
-          if [ -f "models/checkpoints/latest.npz" ]; then
+          if [ -f "models/checkpoints/latest.npz" ] || [ -f "models/checkpoints/best.npz" ]; then
             echo "✅ VAE treinado encontrado!"
             ls -lh models/checkpoints/
           else
-            echo "⚠️ Sem VAE treinado - usando pesos aleatórios"
+            echo "⚠️ Sem VAE treinado - usando pesos aleatorios"
           fi
       - name: 🎨 Gerar
         run: |
@@ -118,7 +125,8 @@ jobs:
           python pixel_art_generator.py --batch --prompt "$PROMPT" \
             --width $WIDTH --height $HEIGHT --palette-size $PALETTE_SIZE \
             --dithering $DITHERING --outline $OUTLINE --scale $SCALE \
-            --count $COUNT --noise-scale $NOISE_SCALE --coherence $COHERENCE $STYLE_ARG
+            --count $COUNT --noise-scale $NOISE_SCALE \
+            --coherence $COHERENCE --overlap $OVERLAP $STYLE_ARG
       - name: 💾 Commit e Push
         run: |
           git config user.name "github-actions[bot]"
