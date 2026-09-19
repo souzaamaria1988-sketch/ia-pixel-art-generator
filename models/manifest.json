@@ -3,8 +3,8 @@
   "hidden_size": 512,
   "n_blocks": 12,
   "total_params": 201752576,
-  "epochs": 2500,
-  "final_loss": 4.298913619321775,
+  "epochs": 5000,
+  "final_loss": 4.298862629884584,
   "best_loss": 4.298924308081654,
   "layers": [
     "layer_000.npz",
@@ -88,7 +88,7 @@
     "color_harmony_expert"
   ],
   "quantization": "int8",
-  "trained_at": "2026-09-19T18:42:05.828636",
-  "training_time_seconds": 76,
+  "trained_at": "2026-09-19T18:54:52.564049",
+  "training_time_seconds": 211,
   "runner": "ubuntu-latest"
 }
