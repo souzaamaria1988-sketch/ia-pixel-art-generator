@@ -1,484 +1,458 @@
 #!/usr/bin/env python3
 """
-Pixel Art AI Generator - MoE 64 experts + RAG + procedural
-Autor: Valentin
+🎨 PIXEL ART AI GENERATOR
+Gera pixel art procedural baseada em prompt usando paletas reais de consoles clássicos.
+Autor: gerador procedural (numpy + scipy + pillow)
 """
-import os, sys, json, math, random, hashlib, argparse, gc
+import argparse
+import hashlib
+import os
+import sys
 from datetime import datetime
-from pathlib import Path
+
 import numpy as np
 from PIL import Image
+from scipy import ndimage
 
-OUTPUT_DIR = Path("pixel_art_output")
-MODEL_DIR = Path("models")
-LAYERS_DIR = MODEL_DIR / "layers"
-KNOWLEDGE_FILE = Path("knowledge_base.json")
-MANIFEST_FILE = MODEL_DIR / "manifest.json"
-
-PALETTE_NES = ["#7C7C7C","#0000FC","#0000BC","#4428BC","#940084","#A80020","#A81000","#881400","#503000","#007800","#006800","#005800","#004058","#000000","#BCBCBC","#0078F8","#0058F8","#6844FC","#D800CC","#E40058","#F83800","#E45C10","#AC7C00","#00B800","#00A800","#00A844","#008888","#F8F8F8","#3CBCFC","#6888FC","#9878F8","#F878F8","#F85898","#F87858","#FCA044","#F8B800","#B8F818","#58D854","#58F898","#00E8D8","#787878","#FCFCFC","#A4E4FC","#B8B8F8","#D8B8F8","#F8B8F8","#F8A4C0","#F0D0B0","#FCE0A8","#F8D878","#D8F878","#B8F8B8","#B8F8D8","#00FCFC"]
-PALETTE_GAMEBOY = ["#0f380f","#306230","#8bac0f","#9bbc0e"]
-PALETTE_CGA = ["#000000","#55FFFF","#FF55FF","#FFFFFF"]
-
-BAYER_2x2 = np.array([[0,2],[3,1]],dtype=np.float32)/4.0
-BAYER_4x4 = np.array([[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]],dtype=np.float32)/16.0
-BAYER_8x8 = np.array([[0,32,8,40,2,34,10,42],[48,16,56,24,50,18,58,26],[12,44,4,36,14,46,6,38],[60,28,52,20,62,30,54,22],[3,35,11,43,1,33,9,41],[51,19,59,27,49,17,57,25],[15,47,7,39,13,45,5,37],[63,31,55,23,61,29,53,21]],dtype=np.float32)/64.0
-
-EXPERT_NAMES = ["nes_8bit","snes_16bit","gameboy","gba","cga","atari","commodore64","amiga","modern_pixel","isometric","topdown","side_scroller","platformer","rpg","action","adventure","puzzle","shooter","fighting","racing","sports","strategy","simulation","horror_pixel","fantasy_pixel","scifi_pixel","medieval_pixel","steampunk_pixel","cyberpunk_pixel","post_apocalyptic","underwater_pixel","space_pixel","western_pixel","noir_pixel","cartoon_pixel","anime_pixel","realistic_pixel","abstract_pixel","minimal_pixel","detailed_pixel","monochrome","sepia_pixel","neon_pixel","pastel_pixel","dark_pixel","bright_pixel","character_sprite","enemy_sprite","item_sprite","tileset_terrain","tileset_dungeon","tileset_city","tileset_forest","background_sky","background_ground","ui_elements","icons","animations","portraits","logos","dithering_expert","outline_expert","cel_shading_expert","color_harmony_expert"]
-
-def hex_to_rgb(h):
-    h = h.lstrip('#')
-    return tuple(int(h[i:i+2],16) for i in (0,2,4))
-
-def make_palette(name="nes", n=16, seed=None):
-    rng = np.random.RandomState(seed)
-    if name == "nes": colors = PALETTE_NES
-    elif name == "gameboy": colors = PALETTE_GAMEBOY
-    elif name == "cga": colors = PALETTE_CGA
-    elif name == "monochrome": colors = ["#000000","#555555","#AAAAAA","#FFFFFF"]
-    elif name == "sepia": colors = ["#3B2414","#6B4423","#A67B5B","#D4A574","#E8C8A0","#F5E6D3","#F8F0E3","#FFFFFF"]
-    elif name == "pastel": colors = ["#FFD1DC","#FFB7C5","#FDFD96","#B5EAD7","#C7CEEA","#E2F0CB","#FFDAC1","#B5D8EB","#F0E6FF","#FFE4E1","#DCD0FF","#C1E1C1","#FFEBCD","#E0FFFF","#F5DEB3","#FFFACD"]
-    elif name == "neon": colors = ["#FF006E","#FF4DA6","#FF00FF","#CC00FF","#8B00FF","#00F0FF","#00FFFF","#39FF14","#CCFF00","#FFF200","#FF8C00","#FF1744","#D500F9","#651FFF","#00E5FF","#76FF03"]
-    elif name == "dark": colors = ["#0A0A0A","#1A1A1A","#2C2C2C","#3D3D3D","#4F4F4F","#1A0000","#2A0000","#3A0000","#00001A","#00002A","#00003A","#1A001A","#2A002A","#3A003A","#0A1A0A","#1A2A1A"]
-    elif name == "bright": colors = ["#FFFFFF","#FFFFAA","#AAFFFF","#FFAAFF","#AAFFAA","#FFAAAA","#AAAAFF","#FFCC00","#00CCFF","#FF00CC","#00FFCC","#CCFF00","#CC00FF","#00FF00","#FF0000","#0000FF"]
-    else: colors = PALETTE_NES
-    n = min(n, len(colors))
-    selected = list(colors)
-    if n < len(selected):
-        rng.shuffle(selected)
-        selected = selected[:n]
-    return np.array([hex_to_rgb(c) for c in selected], dtype=np.uint8)
-
-class PerlinNoise:
-    def __init__(self, seed=None):
-        rng = np.random.RandomState(seed)
-        p = np.arange(256); rng.shuffle(p)
-        self.perm = np.concatenate([p,p])
-        self.grads = np.array([[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]],dtype=np.float32)
-    def fade(self,t): return t*t*t*(t*(t*6-15)+10)
-    def lerp(self,a,b,t): return a+t*(b-a)
-    def noise(self,x,y):
-        X=int(math.floor(x))&255; Y=int(math.floor(y))&255
-        xf=x-math.floor(x); yf=y-math.floor(y)
-        u=self.fade(xf); v=self.fade(yf)
-        aa=self.perm[self.perm[X]+Y]%8; ab=self.perm[self.perm[X]+Y+1]%8
-        ba=self.perm[self.perm[X+1]+Y]%8; bb=self.perm[self.perm[X+1]+Y+1]%8
-        g_aa=np.dot(self.grads[aa],[xf,yf]); g_ba=np.dot(self.grads[ba],[xf-1,yf])
-        g_ab=np.dot(self.grads[ab],[xf,yf-1]); g_bb=np.dot(self.grads[bb],[xf-1,yf-1])
-        return self.lerp(self.lerp(g_aa,g_ba,u), self.lerp(g_ab,g_bb,u), v)
-    def fbm(self,x,y,octaves=4):
-        total,freq,amp,maxv=0.0,1.0,1.0,0.0
-        for _ in range(octaves):
-            total+=self.noise(x*freq,y*freq)*amp; maxv+=amp
-            amp*=0.5; freq*=2.0
-        return total/maxv
-    def generate(self,w,h,scale=8.0,octaves=4):
-        out=np.zeros((h,w),dtype=np.float32)
-        for y in range(h):
-            for x in range(w):
-                out[y,x]=self.fbm(x/scale,y/scale,octaves)
-        return (out-out.min())/(out.max()-out.min()+1e-8)
-
-def cellular_cave(w,h,fill=0.45,iter=5,seed=None):
-    rng=np.random.RandomState(seed)
-    grid=(rng.random((h,w))<fill).astype(np.uint8)
-    grid[0,:]=grid[-1,:]=grid[:,0]=grid[:,-1]=1
-    for _ in range(iter):
-        new=grid.copy()
-        for y in range(1,h-1):
-            for x in range(1,w-1):
-                new[y,x]=1 if grid[y-1:y+2,x-1:x+2].sum()>=5 else 0
-        grid=new
-    return grid
-
-def quantize(img,pal):
-    h,w,_=img.shape
-    flat=img.reshape(-1,3).astype(np.float32)
-    p=pal.astype(np.float32)
-    dist=((flat[:,None,:]-p[None,:,:])**2).sum(axis=2)
-    idx=dist.argmin(axis=1)
-    return p[idx].astype(np.uint8).reshape(h,w,3), idx.reshape(h,w)
-
-def dither_bayer(img,pal,matrix):
-    h,w,_=img.shape; mh,mw=matrix.shape
-    p=pal.astype(np.float32); out=np.zeros_like(img); idx_out=np.zeros((h,w),dtype=np.int32)
-    imgf=img.astype(np.float32)
-    for y in range(h):
-        for x in range(w):
-            pix=np.clip(imgf[y,x]+(matrix[y%mh,x%mw]-0.5)*64,0,255)
-            d=((p-pix[None,:])**2).sum(axis=1)
-            i=d.argmin(); out[y,x]=p[i].astype(np.uint8); idx_out[y,x]=i
-    return out, idx_out
-
-def dither_floyd(img,pal):
-    h,w,_=img.shape; p=pal.astype(np.float32)
-    img=img.astype(np.float32).copy(); out=np.zeros_like(img); idx_out=np.zeros((h,w),dtype=np.int32)
-    for y in range(h):
-        for x in range(w):
-            old=img[y,x].copy()
-            d=((p-old[None,:])**2).sum(axis=1); i=d.argmin(); new=p[i]
-            out[y,x]=new.astype(np.uint8); idx_out[y,x]=i
-            err=old-new
-            if x+1<w: img[y,x+1]+=err*7/16
-            if y+1<h:
-                if x-1>=0: img[y+1,x-1]+=err*3/16
-                img[y+1,x]+=err*5/16
-                if x+1<w: img[y+1,x+1]+=err*1/16
-    return np.clip(out,0,255).astype(np.uint8), idx_out
-
-def dither_atkinson(img,pal):
-    h,w,_=img.shape; p=pal.astype(np.float32)
-    img=img.astype(np.float32).copy(); out=np.zeros_like(img); idx_out=np.zeros((h,w),dtype=np.int32)
-    for y in range(h):
-        for x in range(w):
-            old=img[y,x].copy()
-            d=((p-old[None,:])**2).sum(axis=1); i=d.argmin(); new=p[i]
-            out[y,x]=new.astype(np.uint8); idx_out[y,x]=i
-            err=(old-new)/8
-            if x+1<w: img[y,x+1]+=err
-            if x+2<w: img[y,x+2]+=err
-            if y+1<h:
-                if x-1>=0: img[y+1,x-1]+=err
-                img[y+1,x]+=err
-                if x+1<w: img[y+1,x+1]+=err
-            if y+2<h: img[y+2,x]+=err
-    return np.clip(out,0,255).astype(np.uint8), idx_out
-
-def apply_dithering(img,pal,method="bayer4x4"):
-    if method=="bayer2x2": return dither_bayer(img,pal,BAYER_2x2)
-    if method=="bayer4x4": return dither_bayer(img,pal,BAYER_4x4)
-    if method=="bayer8x8": return dither_bayer(img,pal,BAYER_8x8)
-    if method=="floyd_steinberg": return dither_floyd(img,pal)
-    if method=="atkinson": return dither_atkinson(img,pal)
-    return quantize(img,pal)
-
-def add_outline(img,color="dark"):
-    h,w,_=img.shape; out=img.copy()
-    ol=np.array([0,0,0] if color=="dark" else [255,255,255],dtype=np.uint8)
-    bg=np.array([255,255,255],dtype=np.uint8)
-    for y in range(h):
-        for x in range(w):
-            if np.array_equal(img[y,x],bg): continue
-            for dy,dx in [(-1,0),(1,0),(0,-1),(0,1)]:
-                ny,nx=y+dy,x+dx
-                if 0<=ny<h and 0<=nx<w and np.array_equal(img[ny,nx],bg):
-                    out[y,x]=ol; break
-    return out
-
-def resize_nearest(img,scale=4):
-    pil=Image.fromarray(img)
-    return np.array(pil.resize((pil.width*scale,pil.height*scale),Image.NEAREST))
-
-def gen_symmetric_sprite(w,h,seed,pal,density=0.45):
-    rng=np.random.RandomState(seed)
-    img=np.full((h,w,3),255,dtype=np.uint8)
-    half_w=(w+1)//2
-    main_color=pal[rng.randint(0,len(pal))]
-    second_color=pal[rng.randint(0,len(pal))]
-    mask=np.zeros((h,half_w),dtype=bool)
-    cy=rng.randint(h//4,3*h//4); cx=rng.randint(0,half_w)
-    for _ in range(int(w*h*density)):
-        if 0<=cy<h and 0<=cx<half_w: mask[cy,cx]=True
-        cy+=rng.randint(-1,2); cx+=rng.randint(-1,2)
-        cy=max(0,min(h-1,cy)); cx=max(0,min(half_w-1,cx))
-    for y in range(h):
-        for x in range(half_w):
-            if mask[max(0,y-1):y+2,max(0,x-1):x+2].sum()>=3: mask[y,x]=True
-    for y in range(h):
-        for x in range(half_w):
-            if mask[y,x]:
-                img[y,x]=main_color
-                mx=w-1-x
-                if mx>=0: img[y,mx]=main_color
-    for y in range(h):
-        for x in range(half_w):
-            if mask[y,x] and rng.random()<0.15:
-                img[y,x]=second_color
-                mx=w-1-x
-                if mx>=0: img[y,mx]=second_color
-    return img
-
-def gen_terrain(w,h,seed,biome="grass"):
-    perlin=PerlinNoise(seed)
-    noise=perlin.generate(w,h,scale=max(4,w/4),octaves=4)
-    img=np.zeros((h,w,3),dtype=np.uint8)
-    if biome=="desert":
-        img[...,0]=(200+noise*55).astype(np.uint8); img[...,1]=(170+noise*40).astype(np.uint8); img[...,2]=(100+noise*30).astype(np.uint8)
-    elif biome=="water":
-        img[...,0]=(30+noise*50).astype(np.uint8); img[...,1]=(80+noise*80).astype(np.uint8); img[...,2]=(150+noise*100).astype(np.uint8)
-    elif biome=="mountain":
-        img[...,0]=(80+noise*100).astype(np.uint8); img[...,1]=(80+noise*100).astype(np.uint8); img[...,2]=(85+noise*100).astype(np.uint8)
-        img[noise>0.75]=[240,240,250]
-    else:
-        img[...,0]=(30+noise*60).astype(np.uint8); img[...,1]=(100+noise*120).astype(np.uint8); img[...,2]=(30+noise*50).astype(np.uint8)
-    return img
-
-def gen_space(w,h,seed):
-    rng=np.random.RandomState(seed)
-    img=np.zeros((h,w,3),dtype=np.uint8)
-    for y in range(h):
-        img[y,:]=[int(10+y/h*20),0,int(30+y/h*40)]
-    for _ in range(w*h//8):
-        x,y=rng.randint(0,w),rng.randint(0,h); b=rng.randint(180,256)
-        img[y,x]=[b,b,b]
-    perlin=PerlinNoise(seed+1000)
-    neb=perlin.generate(w,h,scale=max(4,w/3),octaves=3)
-    for y in range(h):
-        for x in range(w):
-            v=neb[y,x]
-            if v>0.55:
-                r,g,b=img[y,x]
-                img[y,x]=[min(255,int(r+v*100)),min(255,int(g+v*30)),min(255,int(b+v*80))]
-    return img
-
-def gen_city(w,h,seed):
-    rng=np.random.RandomState(seed)
-    img=np.zeros((h,w,3),dtype=np.uint8)
-    for y in range(h):
-        t=y/h; img[y,:]=[int(20+t*30),int(10+t*20),int(60+t*40)]
-    ground=int(h*0.75); x=0
-    while x<w:
-        bw=rng.randint(max(3,w//10),max(4,w//5)); bh=rng.randint(h//4,int(h*0.7)); by=ground-bh
-        c=rng.randint(40,100); img[by:ground,x:min(w,x+bw)]=[c,c,c+20]
-        for wy in range(by+2,ground-2,4):
-            for wx in range(x+1,min(w-1,x+bw-1),3):
-                if rng.random()>0.4: img[wy:wy+2,wx:wx+1]=[255,220,100]
-        x+=bw+rng.randint(0,2)
-    img[ground:h,:]=[30,30,40]
-    return img
-
-def gen_dungeon(w,h,seed):
-    cave=cellular_cave(w,h,fill=0.45,iter=5,seed=seed)
-    img=np.zeros((h,w,3),dtype=np.uint8)
-    img[cave==1]=[40,30,25]; img[cave==0]=[80,70,60]
-    rng=np.random.RandomState(seed)
-    for _ in range(max(1,w*h//400)):
-        tx,ty=rng.randint(1,w-1),rng.randint(1,h-1)
-        if cave[ty,tx]==0: img[ty,tx]=[255,150,0]
-    return img
-
-def gen_tileset(w,h,seed,biome="grass"):
-    rng=np.random.RandomState(seed)
-    img=np.zeros((h,w,3),dtype=np.uint8)
-    ts=16 if w>=64 else 8
-    for ty in range(h//ts):
-        for tx in range(w//ts):
-            sub=gen_terrain(ts,ts,seed+ty*100+tx,biome)
-            img[ty*ts:ty*ts+ts,tx*ts:tx*ts+ts]=sub
-    return img
-
-def generate_base(prompt,cfg,w,h,seed,pal):
-    subject=cfg.get("subject"); scene=cfg.get("scene"); cat=cfg.get("category")
-    if scene in ("cave","dungeon"): return gen_dungeon(w,h,seed)
-    if scene=="space": return gen_space(w,h,seed)
-    if scene=="city": return gen_city(w,h,seed)
-    if scene in ("desert","beach"): return gen_terrain(w,h,seed,"desert")
-    if scene in ("water","sea","underwater"): return gen_terrain(w,h,seed,"water")
-    if scene=="mountain": return gen_terrain(w,h,seed,"mountain")
-    if scene in ("forest","grass","terrain"): return gen_terrain(w,h,seed,"grass")
-    if cat=="tileset": return gen_tileset(w,h,seed,scene or "grass")
-    return gen_symmetric_sprite(w,h,seed,pal)
-
-KEYWORDS = {
-    "nes":{"style":"nes_8bit","palette":"nes","palette_size":16,"dithering":"bayer2x2"},
-    "8-bit":{"style":"nes_8bit","palette":"nes","palette_size":16},
-    "8bit":{"style":"nes_8bit","palette":"nes","palette_size":16},
-    "snes":{"style":"snes_16bit","palette":"nes","palette_size":32},
-    "16-bit":{"style":"snes_16bit","palette":"nes","palette_size":32},
-    "gameboy":{"style":"gameboy","palette":"gameboy","palette_size":4},
-    "game boy":{"style":"gameboy","palette":"gameboy","palette_size":4},
-    "cga":{"style":"cga","palette":"cga","palette_size":4},
-    "retrô":{"style":"nes_8bit"},"retro":{"style":"nes_8bit"},
-    "isométrico":{"style":"isometric"},"isometric":{"style":"isometric"},
-    "top-down":{"style":"topdown"},"cyberpunk":{"style":"cyberpunk_pixel","palette":"neon"},
-    "steampunk":{"style":"steampunk_pixel","palette":"sepia"},
-    "medieval":{"style":"medieval_pixel"},"anime":{"style":"anime_pixel"},
-    "horror":{"style":"horror_pixel","palette":"dark"},
-    "fantasia":{"style":"fantasy_pixel"},"espacial":{"style":"space_pixel"},
-    "neon":{"palette":"neon","style":"neon_pixel"},"pastel":{"palette":"pastel"},
-    "monocromático":{"palette":"monochrome","palette_size":4},
-    "monocromatico":{"palette":"monochrome","palette_size":4},
-    "escuro":{"palette":"dark"},"claro":{"palette":"bright"},
-    "personagem":{"subject":"character"},"herói":{"subject":"hero"},"heroi":{"subject":"hero"},
-    "vilão":{"subject":"villain"},"monstro":{"subject":"monster"},"inimigo":{"subject":"enemy"},
-    "dragão":{"subject":"dragon"},"dragao":{"subject":"dragon"},
-    "slime":{"subject":"slime"},"goblin":{"subject":"goblin"},"esqueleto":{"subject":"skeleton"},
-    "gato":{"subject":"cat"},"robô":{"subject":"robot"},"robo":{"subject":"robot"},
-    "espada":{"subject":"sword"},"escudo":{"subject":"shield"},"poção":{"subject":"potion"},
-    "chave":{"subject":"key"},"moeda":{"subject":"coin"},"baú":{"subject":"chest"},
-    "floresta":{"scene":"forest"},"dungeon":{"scene":"dungeon"},"caverna":{"scene":"cave"},
-    "cidade":{"scene":"city"},"espaço":{"scene":"space"},"espaco":{"scene":"space"},
-    "deserto":{"scene":"desert"},"montanha":{"scene":"mountain"},
-    "subaquático":{"scene":"underwater"},"mar":{"scene":"water"},
-    "tileset":{"category":"tileset"},"terreno":{"scene":"terrain"},"grama":{"scene":"grass"},
-    "água":{"scene":"water"},"agua":{"scene":"water"},"noite":{"palette":"dark"},
+# ============================================================
+# PALETAS DE ESTILOS (cores reais de hardware clássico)
+# ============================================================
+STYLES = {
+    'gameboy': ['#0f380f', '#306230', '#8bac0f', '#9bbc0f'],
+    'gameboy-pocket': ['#000000', '#555555', '#aaaaaa', '#ffffff'],
+    'gameboy-light': ['#2b2b2b', '#5a5a5a', '#9a9a9a', '#dadada'],
+    'nes': [
+        '#7c7c7c','#0000fc','#0000bc','#4028bc','#940084','#a80020','#a81000','#881400',
+        '#503000','#007800','#006800','#005800','#004058','#000000','#000000','#000000',
+        '#bcbcbc','#0078f8','#0058f8','#6844fc','#d800cc','#e40058','#f83800','#e45c10',
+        '#ac7c00','#00b800','#00a800','#00a844','#008888','#000000','#000000','#000000',
+        '#f8f8f8','#3cbcfc','#6888fc','#9878f8','#f878f8','#f85898','#f87858','#fca044',
+        '#f8b800','#b8f818','#58d854','#58f898','#00e8d8','#787878','#000000','#000000',
+        '#fcfcfc','#a4e4fc','#b8b8f8','#d8b8f8','#f8b8f8','#f8a4c0','#f0d0b0','#fce0a8',
+        '#f8d878','#d8f878','#b8f8b8','#b8f8d8','#00fcfc','#f8d8f8','#000000','#000000',
+    ],
+    'snes': ['#000000','#1a1a2e','#16213e','#0f3460','#533483','#e94560','#f5b461','#f5d76e'],
+    'pico8': ['#000000','#1d2b53','#7e2553','#008751','#ab5236','#5f574f',
+              '#c2c3c7','#fff1e8','#ff004d','#ffa300','#ffec27','#00e436',
+              '#29adff','#83769c','#ff77a8','#ffccaa'],
+    'cga': ['#000000','#555555','#0000aa','#5555ff','#00aa00','#55ff55',
+            '#00aaaa','#55ffff','#aa0000','#ff5555','#aa00aa','#ff55ff',
+            '#aa5500','#ffff55','#aaaaaa','#ffffff'],
+    'cga-high': ['#000000','#55ffff','#ff55ff','#ffffff'],
+    'cga-low':  ['#000000','#ff5555','#ffff55','#ffffff'],
+    'cga-bw':   ['#000000','#ffffff'],
+    'ega': ['#000000','#0000aa','#00aa00','#00aaaa','#aa0000','#aa00aa','#aa5500','#aaaaaa',
+            '#555555','#5555ff','#55ff55','#55ffff','#ff5555','#ff55ff','#ffff55','#ffffff'],
+    'grayscale': [f'#{i:02x}{i:02x}{i:02x}' for i in range(0, 256, 16)],
+    'monochrome': ['#000000', '#ffffff'],
+    'neon':  ['#0d0221','#0a0a2a','#ff006e','#fb5607','#ffbe0b','#8338ec','#3a86ff','#ffffff'],
+    'pastel':['#f8f9fa','#ffd6e0','#d4f1f4','#b5ead7','#c7ceea','#fff5ba','#f0e6ff','#ffffff'],
+    'autumn':['#2b170a','#5c2e0a','#8b3a0a','#b84a0a','#d96c0a','#f59e0a','#f8c471','#fae3c7'],
+    'cyber': ['#000000','#1a0b2e','#ff00ff','#00ffff','#ff0080','#8000ff','#ffffff','#ffff00'],
 }
 
-def interpret_prompt(prompt):
-    cfg={"style":"modern_pixel","palette":"nes","palette_size":16,"dithering":"bayer4x4",
-         "outline":"none","subject":None,"scene":None,"category":None,"tags":[]}
-    pl=prompt.lower()
-    for key in sorted(KEYWORDS.keys(),key=len,reverse=True):
-        if key in pl:
-            for k,v in KEYWORDS[key].items():
-                if v is not None: cfg[k]=v
-            cfg["tags"].append(key)
-    return cfg
+# ============================================================
+# MATRIZES DE DITHERING (ordered Bayer)
+# ============================================================
+DITHER_MATRICES = {
+    'none':    None,
+    'bayer2x2': np.array([[0, 2],
+                          [3, 1]], dtype=float) / 4.0 - 0.5,
+    'bayer4x4': np.array([[ 0, 8, 2,10],
+                          [12, 4,14, 6],
+                          [ 3,11, 1, 9],
+                          [15, 7,13, 5]], dtype=float) / 16.0 - 0.5,
+    'bayer8x8': np.array([
+        [ 0,32, 8,40, 2,34,10,42],
+        [48,16,56,24,50,18,58,26],
+        [12,44, 4,36,14,46, 6,38],
+        [60,28,52,20,62,30,54,22],
+        [ 3,35,11,43, 1,33, 9,41],
+        [51,19,59,27,49,17,57,25],
+        [15,47, 7,39,13,45, 5,37],
+        [63,31,55,23,61,29,53,21]
+    ], dtype=float) / 64.0 - 0.5,
+}
 
-class RAG:
-    def __init__(self,path=KNOWLEDGE_FILE):
-        self.entries=[]
-        if path.exists():
-            try:
-                with open(path,"r",encoding="utf-8") as f:
-                    self.entries=json.load(f).get("entries",[])
-            except Exception: pass
-    def retrieve(self,query,top_k=3):
-        if not self.entries: return []
-        qt=set(query.lower().replace(","," ").replace("-"," ").split())
-        scored=[]
-        for e in self.entries:
-            s=0
-            tags=set(t.lower() for t in e.get("tags",[]))
-            s+=len(qt&tags)*3
-            if e.get("style","").lower() in query.lower(): s+=5
-            if s>0: scored.append((s,e))
-        scored.sort(key=lambda x:-x[0])
-        return [e for _,e in scored[:top_k]]
+# ============================================================
+# HELPERS
+# ============================================================
+def hex_to_rgb(h):
+    h = h.lstrip('#')
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
-class MoE:
-    def __init__(self,num_experts=64,hidden=512,blocks=12):
-        self.num_experts=num_experts; self.hidden=hidden; self.blocks=blocks
-        self.current=None; self.current_idx=-1
-    def load_layer(self,idx):
-        if idx==self.current_idx and self.current is not None: return self.current
-        self.current=None; self.current_idx=-1; gc.collect()
-        path=LAYERS_DIR/f"layer_{idx:03d}.npz"
-        if path.exists():
-            data=np.load(path); layer={}
-            for k in data.files:
-                arr=data[k]
-                if arr.dtype==np.int8 and f"{k}_scale" in data.files:
-                    layer[k]=arr.astype(np.float32)*float(data[f"{k}_scale"])
-                else: layer[k]=arr.astype(np.float32)
-            self.current=layer
+def seed_from_prompt(prompt, idx=0):
+    """Hash determinístico a partir do prompt + índice."""
+    h = hashlib.md5(f"{prompt}::{idx}".encode('utf-8')).digest()
+    return int.from_bytes(h[:4], 'big')
+
+def make_rng(seed):
+    return np.random.default_rng(int(seed) & 0xFFFFFFFF)
+
+def detect_archetype(prompt):
+    """Detecta tipo de sprite a partir do prompt para ajustar a forma."""
+    p = (prompt or '').lower()
+    if any(k in p for k in ['dragão','dragon','monstro','monster','beast','demon','slime',
+                            'orc','goblin','serpent','snake','spider','boss','criatura']):
+        return 'creature'
+    if any(k in p for k in ['personagem','character','hero','herói','knight','guerreiro',
+                            'warrior','mage','mago','elf','elfo','samurai','ninja','girl',
+                            'boy','man','woman','pirate','king','queen','rei','rainha']):
+        return 'character'
+    if any(k in p for k in ['espada','sword','potion','poção','shield','escudo','bow','arco',
+                            'axe','machado','key','chave','coin','moeda','gem','joia',
+                            'item','arma','weapon','staff','ring','anel','heart','coração']):
+        return 'item'
+    if any(k in p for k in ['castelo','castle','torre','tower','casa','house','dungeon',
+                            'cidade','city','building','prédio','templo','temple']):
+        return 'building'
+    if any(k in p for k in ['árvore','tree','planta','plant','flower','flor','cogumelo',
+                            'mushroom','grass','grama','bush','arbusto','leaf','folha']):
+        return 'plant'
+    if any(k in p for k in ['montanha','mountain','nuvem','cloud','star','estrela',
+                            'moon','lua','sun','sol','sky','céu','landscape','paisagem']):
+        return 'landscape'
+    if any(k in p for k in ['carro','car','ship','nave','spaceship','rocket','foguet',
+                            'plane','avião','tank','tanque','ufo','ovni','mech','robô','robot']):
+        return 'vehicle'
+    return 'blob'
+
+ARCHETYPE_PARAMS = {
+    'creature':   {'fill': 0.50, 'tall': 0.9, 'detail': 0.7, 'eyes': 0.9, 'spiky': 0.6},
+    'character':  {'fill': 0.45, 'tall': 1.4, 'detail': 0.8, 'eyes': 1.0, 'spiky': 0.1},
+    'item':       {'fill': 0.35, 'tall': 1.0, 'detail': 0.9, 'eyes': 0.0, 'spiky': 0.3},
+    'building':   {'fill': 0.60, 'tall': 1.2, 'detail': 0.5, 'eyes': 0.0, 'spiky': 0.4},
+    'plant':      {'fill': 0.40, 'tall': 1.3, 'detail': 0.6, 'eyes': 0.0, 'spiky': 0.2},
+    'landscape':  {'fill': 0.55, 'tall': 0.6, 'detail': 0.4, 'eyes': 0.0, 'spiky': 0.0},
+    'vehicle':    {'fill': 0.45, 'tall': 0.8, 'detail': 0.7, 'eyes': 0.2, 'spiky': 0.5},
+    'blob':       {'fill': 0.45, 'tall': 1.0, 'detail': 0.6, 'eyes': 0.5, 'spiky': 0.3},
+}
+
+# ============================================================
+# GERADOR DE SILHUETA SIMÉTRICA
+# ============================================================
+def generate_silhouette(w, h, rng, fill_ratio=0.45, spiky=0.0, tall_ratio=1.0):
+    """Cria uma máscara binária simétrica horizontalmente."""
+    # Ajustar proporção efetiva baseada em tall_ratio
+    eff_w = max(4, int(w / max(0.5, tall_ratio)))
+    eff_w = min(eff_w, w)
+    half_w = max(2, (eff_w + 1) // 2)
+
+    noise = rng.random((h, half_w))
+    ys = np.linspace(-1.0, 1.0, h)
+    xs = np.linspace(-1.0, 1.0, half_w)
+    yy, xx = np.meshgrid(ys, xs, indexing='ij')
+    dist = np.sqrt(xx**2 + yy**2)
+    # Envelope elíptico suave
+    bias = np.exp(-dist * 1.6) * fill_ratio * 2.2
+    # Adicionar "espinhos" aleatórios na borda
+    if spiky > 0:
+        spike_noise = rng.random((h, half_w)) * spiky * 0.3
+        # spikes crescem mais longe do centro
+        bias = bias + spike_noise * dist * 1.5
+
+    half_mask = (noise < bias).astype(np.uint8)
+
+    # Espelhar
+    if eff_w % 2 == 0:
+        mask = np.concatenate([half_mask, half_mask[:, ::-1]], axis=1)
+    else:
+        mask = np.concatenate([half_mask, half_mask[:, :-1][:, ::-1]], axis=1)
+
+    # Centralizar horizontalmente no canvas original
+    if eff_w < w:
+        pad_left = (w - eff_w) // 2
+        pad_right = w - eff_w - pad_left
+        mask = np.pad(mask, ((0,0),(pad_left, pad_right)), mode='constant')
+
+    # Limpeza morfológica
+    mask = clean_mask(mask)
+    return mask
+
+def clean_mask(mask, min_size=6):
+    """Remove ilhas pequenas e garante ao menos 1 componente."""
+    labeled, n = ndimage.label(mask)
+    for i in range(1, n + 1):
+        if (labeled == i).sum() < min_size:
+            mask[labeled == i] = 0
+    if mask.sum() < min_size:
+        cy, cx = mask.shape[0] // 2, mask.shape[1] // 2
+        r = max(1, min(mask.shape) // 6)
+        mask[max(0, cy-r):cy+r+1, max(0, cx-r):cx+r+1] = 1
+    # Fecha pequenos buracos internos
+    closed = ndimage.binary_fill_holes(mask.astype(bool)).astype(np.uint8)
+    if closed.sum() > mask.sum() * 0.9:
+        mask = closed
+    return mask
+
+# ============================================================
+# DETALHES: OLHOS, SOMBRA E HIGHLIGHT
+# ============================================================
+def compute_details(base_mask, rng, detail_intensity=0.6, eyes_chance=0.8):
+    h, w = base_mask.shape
+
+    # Sombra na metade inferior + bordas
+    ys = np.linspace(0.0, 1.0, h)[:, None] * np.ones((h, w))
+    shadow = (base_mask == 1) & (ys > (0.55 + rng.random() * 0.15))
+
+    # Highlight no topo
+    highlight = (base_mask == 1) & (ys < (0.25 + rng.random() * 0.1))
+
+    # "Olhos" simétricos
+    eye_mask = np.zeros_like(base_mask, dtype=bool)
+    if rng.random() < eyes_chance and detail_intensity > 0:
+        eye_y = int(h * (0.30 + rng.random() * 0.15))
+        eye_x = int(w * (0.30 + rng.random() * 0.10))
+        eye_r = max(1, int(min(w, h) * (0.05 + rng.random() * 0.04)))
+        for ey in range(max(0, eye_y - eye_r), min(h, eye_y + eye_r + 1)):
+            for ex in (eye_x, w - 1 - eye_x):
+                for dx in range(-eye_r, eye_r + 1):
+                    for dy in range(-eye_r, eye_r + 1):
+                        if dx*dx + dy*dy <= eye_r*eye_r:
+                            py, px = ey + dy, ex + dx
+                            if 0 <= py < h and 0 <= px < w:
+                                eye_mask[py, px] = True
+
+    # Detalhes internos (pintas/stripes) quando intensity é alta
+    if detail_intensity > 0.6 and rng.random() < 0.7:
+        inner = base_mask == 1
+        # Stripes verticais fracas
+        stripe = (np.arange(w) % max(2, int(4 + rng.random()*6))) < 1
+        stripe_band = np.tile(stripe, (h, 1))
+        detail = inner & stripe_band & (rng.random((h, w)) < 0.5)
+        # Adiciona como sombra adicional
+        shadow = shadow | detail
+
+    # Resolver prioridades: olho > highlight > sombra > base
+    highlight = highlight & ~eye_mask
+    shadow    = shadow & ~eye_mask & ~highlight
+
+    return shadow.astype(np.uint8), highlight.astype(np.uint8), eye_mask.astype(np.uint8)
+
+# ============================================================
+# OUTLINE
+# ============================================================
+def apply_outline(img_rgb, base_mask, outline_color, thickness=1):
+    struct = np.ones((3, 3), dtype=bool)
+    dilated = ndimage.binary_dilation(base_mask.astype(bool), struct, iterations=thickness)
+    outline = dilated & ~base_mask.astype(bool)
+    result = img_rgb.copy()
+    result[outline] = outline_color
+    return result
+
+# ============================================================
+# DITHERING + QUANTIZAÇÃO (tudo junto, vetorizado)
+# ============================================================
+def apply_dither_and_quantize(img_rgb, palette_hex, dither_name):
+    """Aplica ordered dithering e quantiza para a paleta em uma única passada."""
+    palette = np.array([hex_to_rgb(c) for c in palette_hex], dtype=float)
+    h, w, _ = img_rgb.shape
+    img_f = img_rgb.astype(float)
+
+    mat = DITHER_MATRICES.get(dither_name)
+    if mat is None:
+        # Apenas quantiza
+        flat = img_f.reshape(-1, 3)
+        diff = flat[:, None, :] - palette[None, :, :]
+        idx = np.argmin(np.sum(diff * diff, axis=2), axis=1)
+        return palette[idx].reshape(h, w, 3).astype(np.uint8)
+
+    # Tile da matriz de Bayer
+    mh, mw = mat.shape
+    th = np.tile(mat, (int(np.ceil(h / mh)), int(np.ceil(w / mw))))[:h, :w]
+
+    # Escala do dithering (quanto perturbar antes de quantizar)
+    dither_scale = 48.0
+    perturbed = img_f + th[..., None] * dither_scale
+    perturbed = np.clip(perturbed, 0.0, 255.0)
+
+    flat = perturbed.reshape(-1, 3)
+    diff = flat[:, None, :] - palette[None, :, :]
+    dist = np.sum(diff * diff, axis=2)
+    idx = np.argmin(dist, axis=1)
+
+    return palette[idx].reshape(h, w, 3).astype(np.uint8)
+
+# ============================================================
+# FUNÇÃO PRINCIPAL
+# ============================================================
+def generate_pixel_art(prompt, width=64, height=64, palette_size=16,
+                       dithering='none', outline='none', style='auto',
+                       seed=0, scale=1, archetype=None):
+    """Gera UMA imagem de pixel art a partir do prompt."""
+    rng = make_rng(seed_from_prompt(prompt, seed))
+
+    # 1) Paleta
+    if style == 'auto' or style not in STYLES:
+        available = [k for k in STYLES.keys() if k not in ('auto',)]
+        style = available[seed_from_prompt(prompt, 0) % len(available)]
+    palette = list(STYLES[style])
+    while len(palette) < max(4, palette_size):
+        palette.append(palette[len(palette) % len(STYLES[style])])
+    palette = palette[:max(4, palette_size)]
+
+    # 2) Archetype (ajusta proporção/forma)
+    if archetype is None:
+        archetype = detect_archetype(prompt)
+    params = ARCHETYPE_PARAMS.get(archetype, ARCHETYPE_PARAMS['blob'])
+    # Leve variação aleatória em cima dos parâmetros
+    fill = params['fill'] + (rng.random() - 0.5) * 0.1
+    fill = float(np.clip(fill, 0.25, 0.75))
+
+    # 3) Silhueta
+    base_mask = generate_silhouette(
+        width, height, rng,
+        fill_ratio=fill,
+        spiky=params['spiky'],
+        tall_ratio=params['tall']
+    )
+
+    # 4) Detalhes
+    shadow, highlight, eyes = compute_details(
+        base_mask, rng,
+        detail_intensity=params['detail'],
+        eyes_chance=params['eyes']
+    )
+
+    # 5) Mapeamento de cores da paleta
+    #    bg (fundo)         = paleta[0]
+    #    base (corpo)       = paleta[2]
+    #    sombra             = paleta[1]
+    #    highlight          = paleta[-1] (mais clara)
+    #    olho               = cor mais escura (geralmente paleta[0] ou [1])
+    bg_color        = hex_to_rgb(palette[0])
+    base_color      = hex_to_rgb(palette[2 % len(palette)])
+    shadow_color    = hex_to_rgb(palette[1 % len(palette)])
+    highlight_color = hex_to_rgb(palette[-1])
+    eye_color       = hex_to_rgb(palette[0]) if len(palette) > 0 else (0, 0, 0)
+
+    # Monta imagem em RGB
+    img = np.full((height, width, 3), bg_color, dtype=np.uint8)
+    body = (base_mask == 1) & (shadow == 0) & (highlight == 0) & (eyes == 0)
+    img[body]          = base_color
+    img[shadow == 1]   = shadow_color
+    img[highlight == 1]= highlight_color
+    img[eyes == 1]     = eye_color
+
+    # 6) Outline (opcional, antes do dither)
+    outline_applied = False
+    if outline not in (None, 'none', 'None', '', 'off', 'false'):
+        if outline == 'black':
+            oc = (0, 0, 0)
+        elif outline == 'white':
+            oc = (255, 255, 255)
+        elif outline == 'dark':
+            oc = hex_to_rgb(palette[0])
         else:
-            seed=int(hashlib.md5(f"layer_{idx}".encode()).hexdigest()[:8],16)%(2**31)
-            rng=np.random.RandomState(seed)
-            self.current={"router":rng.randn(self.hidden,self.num_experts).astype(np.float32)*0.1}
-        self.current_idx=idx
-        return self.current
-    def route(self,features):
-        layer=self.load_layer(0)
-        router=layer.get("router")
-        if router is None: return [0,1],[0.5,0.5]
-        x=features[:self.hidden] if len(features)>=self.hidden else np.pad(features,(0,self.hidden-len(features)))
-        logits=np.dot(x,router)
-        e=np.exp(logits-logits.max()); probs=e/e.sum()
-        top2=np.argsort(probs)[-2:][::-1]
-        w=probs[top2]; w=w/w.sum()
-        return top2.tolist(),w.tolist()
+            try:
+                oc = hex_to_rgb(outline)
+            except Exception:
+                oc = (0, 0, 0)
+        img = apply_outline(img, base_mask, oc, thickness=1)
+        outline_applied = True
 
-def get_next_number():
-    OUTPUT_DIR.mkdir(parents=True,exist_ok=True)
-    nums=[int(f.stem) for f in OUTPUT_DIR.glob("*.png") if f.stem.isdigit()]
-    return max(nums)+1 if nums else 1
+    # 7) Dither + quantização final
+    img = apply_dither_and_quantize(img, palette, dithering)
 
-def save(img,meta,scale=4):
-    OUTPUT_DIR.mkdir(parents=True,exist_ok=True)
-    num=get_next_number()
-    Image.fromarray(img).save(OUTPUT_DIR/f"{num}.png")
-    if scale>1:
-        Image.fromarray(resize_nearest(img,scale)).save(OUTPUT_DIR/f"{num}_x{scale}.png")
-    with open(OUTPUT_DIR/f"{num}.json","w",encoding="utf-8") as f:
-        json.dump(meta,f,indent=2,ensure_ascii=False)
-    meta["number"]=num; meta["path"]=str(OUTPUT_DIR/f"{num}.png")
-    return meta
+    # 8) Scale (pixel-perfect via NEAREST)
+    if scale and int(scale) > 1:
+        pil = Image.fromarray(img)
+        pil = pil.resize((width * int(scale), height * int(scale)), Image.NEAREST)
+    else:
+        pil = Image.fromarray(img)
 
-def generate_pixel_art(prompt,width=64,height=64,style=None,palette_size=16,
-                       dithering="bayer4x4",outline="none",scale=4,seed=None):
-    print(f"\n🎨 Gerando: '{prompt}'")
-    cfg=interpret_prompt(prompt)
-    if style: cfg["style"]=style
-    cfg["palette_size"]=palette_size; cfg["dithering"]=dithering; cfg["outline"]=outline
+    pil.info['style'] = style
+    pil.info['archetype'] = archetype
+    pil.info['outline_applied'] = outline_applied
+    return pil
 
-    rag=RAG(); matches=rag.retrieve(prompt,top_k=3)
-    if matches:
-        top=matches[0]
-        if not style and top.get("style"): cfg["style"]=top["style"]
-        if top.get("palette"): cfg["palette"]=top["palette"]
-        print(f"   📚 RAG: {[m.get('style') for m in matches]}")
-
-    if seed is None: seed=int.from_bytes(os.urandom(4),"little")^hash(prompt)
-    rng=np.random.RandomState(seed)
-
-    moe=MoE()
-    feat=np.zeros(512,dtype=np.float32)
-    feat[0]=(int(hashlib.md5(prompt.encode()).hexdigest()[:8],16)&0xFF)/255.0
-    feat[1]=width/256.0; feat[2]=height/256.0; feat[3]=palette_size/256.0
-    for i,c in enumerate(prompt[:100]): feat[10+i]=ord(c)/255.0
-    experts,weights=moe.route(feat)
-    expert_names=[EXPERT_NAMES[i] if i<len(EXPERT_NAMES) else f"expert_{i}" for i in experts]
-    print(f"   🧠 MoE: {expert_names}")
-
-    pal=make_palette(cfg["palette"],cfg["palette_size"],seed)
-    base=generate_base(prompt,cfg,width,height,seed,pal)
-    dithered,_=apply_dithering(base,pal,cfg["dithering"])
-    if cfg["outline"] not in (None,"none"):
-        dithered=add_outline(dithered,cfg["outline"])
-
-    meta={"prompt":prompt,"config":{k:v for k,v in cfg.items() if k!="tags"},
-          "tags":cfg["tags"],"rag_matches":[m.get("style") for m in matches],
-          "moe_experts":expert_names,"moe_weights":weights,"seed":seed,
-          "palette_name":cfg["palette"],"palette_size":int(cfg["palette_size"]),
-          "dithering":cfg["dithering"],"outline":cfg["outline"],
-          "timestamp":datetime.now().isoformat(),"resolution":[width,height],"scale":scale}
-    saved=save(dithered,meta,scale)
-    print(f"   ✅ Salvo: {saved['path']}")
-    return saved
-
-def batch_generate(prompt,count=1,**kw):
-    results=[]
-    for i in range(count):
-        s=int.from_bytes(os.urandom(4),"little")^hash(prompt+str(i))
-        results.append(generate_pixel_art(prompt,seed=s,**kw))
+# ============================================================
+# BATCH
+# ============================================================
+def batch_generate(prompt, count=1, **kwargs):
+    """Gera N variações. Resolve o bug 'multiple values for seed'."""
+    results = []
+    for i in range(int(count)):
+        kw_copy = dict(kwargs)         # cópia independente
+        kw_copy['seed'] = i            # injeta o seed aqui, não na chamada
+        results.append(generate_pixel_art(prompt, **kw_copy))
     return results
 
+# ============================================================
+# CLI
+# ============================================================
 def main():
-    p=argparse.ArgumentParser(description="🎨 Gerador de Pixel Art")
-    p.add_argument("--batch",action="store_true")
-    p.add_argument("--prompt",type=str)
-    p.add_argument("--width",type=int,default=64)
-    p.add_argument("--height",type=int,default=64)
-    p.add_argument("--style",type=str,default=None)
-    p.add_argument("--palette-size",type=int,default=16)
-    p.add_argument("--dithering",type=str,default="bayer4x4")
-    p.add_argument("--outline",type=str,default="none")
-    p.add_argument("--scale",type=int,default=4)
-    p.add_argument("--count",type=int,default=1)
-    p.add_argument("--seed",type=int,default=None)
-    args=p.parse_args()
-    print("="*60); print("🎨 PIXEL ART AI GENERATOR"); print("="*60)
-    if args.batch:
-        if not args.prompt: print("❌ --prompt obrigatório"); sys.exit(1)
-        batch_generate(args.prompt,count=args.count,width=args.width,height=args.height,
-                       style=args.style,palette_size=args.palette_size,dithering=args.dithering,
-                       outline=args.outline,scale=args.scale,seed=args.seed)
-        print(f"\n✅ {args.count} pixel arts geradas em {OUTPUT_DIR}/")
-        return
-    while True:
-        print("\n1.Gerar  2.Aleatório  3.Batch(5)  4.Listar  5.Sair")
-        op=input("Opção: ").strip()
-        if op=="1":
-            pr=input("Prompt: ").strip()
-            if pr: generate_pixel_art(pr)
-        elif op=="2":
-            generate_pixel_art(random.choice(["herói estilo NES","dragão 16-bit","floresta Game Boy","nave cyberpunk","dungeon escura"]))
-        elif op=="3":
-            pr=input("Prompt: ").strip()
-            if pr: batch_generate(pr,count=5)
-        elif op=="4":
-            if OUTPUT_DIR.exists():
-                for f in sorted(OUTPUT_DIR.glob("*.png"))[-10:]: print(f"  - {f.name}")
-        elif op=="5": break
+    print("🎨 PIXEL ART AI GENERATOR")
+    print("=" * 60)
 
-if __name__=="__main__": main()
+    parser = argparse.ArgumentParser(description="Gera pixel art procedural")
+    parser.add_argument('--prompt', required=True, help="Descrição da arte")
+    parser.add_argument('--width', type=int, default=64)
+    parser.add_argument('--height', type=int, default=64)
+    parser.add_argument('--palette-size', type=int, default=16)
+    parser.add_argument('--dithering', default='none',
+                        choices=list(DITHER_MATRICES.keys()))
+    parser.add_argument('--outline', default='none',
+                        help="none | black | white | dark | #rrggbb")
+    parser.add_argument('--scale', type=int, default=1)
+    parser.add_argument('--count', type=int, default=1)
+    parser.add_argument('--style', default='auto',
+                        choices=list(STYLES.keys()) + ['auto'])
+    parser.add_argument('--batch', action='store_true',
+                        help="Ativa modo batch (--count > 1)")
+    parser.add_argument('--archetype', default=None,
+                        choices=list(ARCHETYPE_PARAMS.keys()) + [None],
+                        help="Força tipo de sprite (auto-detectado do prompt se omitido)")
+    parser.add_argument('--outdir', default='pixel_art_output')
+    parser.add_argument('--seed', type=int, default=None,
+                        help="Seed global (ignorado em batch)")
+    args = parser.parse_args()
+
+    os.makedirs(args.outdir, exist_ok=True)
+
+    kwargs = dict(
+        width=args.width,
+        height=args.height,
+        palette_size=args.palette_size,
+        dithering=args.dithering,
+        outline=args.outline,
+        style=args.style,
+        scale=args.scale,
+    )
+    if args.archetype is not None:
+        kwargs['archetype'] = args.archetype
+
+    use_batch = args.batch or args.count > 1
+    if use_batch:
+        images = batch_generate(args.prompt, count=args.count, **kwargs)
+    else:
+        if args.seed is not None:
+            kwargs['seed'] = args.seed
+        images = [generate_pixel_art(args.prompt, **kwargs)]
+
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    safe_prompt = "".join(c for c in (args.prompt or '') if c.isalnum() or c in ' _-')
+    safe_prompt = safe_prompt.strip().replace(' ', '_')[:40] or 'pixel'
+
+    paths = []
+    for i, img in enumerate(images):
+        style_used = img.info.get('style', args.style)
+        arch_used  = img.info.get('archetype', '?')
+        fname = f"{safe_prompt}_{style_used}_{arch_used}_{ts}_{i:03d}.png"
+        path = os.path.join(args.outdir, fname)
+        img.save(path, optimize=True)
+        paths.append(path)
+        print(f"  ✓ [{i+1}/{len(images)}] {fname}  (style={style_used}, arch={arch_used})")
+
+    print(f"\n✨ {len(images)} imagem(ns) gerada(s) em '{args.outdir}/'")
+    return paths
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n⛔ cancelado")
+        sys.exit(130)
+    except Exception as e:
+        print(f"❌ erro: {e}", file=sys.stderr)
+        raise
