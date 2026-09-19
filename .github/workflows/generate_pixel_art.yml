@@ -1,0 +1,115 @@
+name: 🎨 Gerar Pixel Art
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: 'Prompt em PT-BR (ex: "herói com espada estilo NES")'
+        required: true
+        type: string
+      style:
+        description: 'Estilo'
+        required: false
+        type: choice
+        default: 'auto'
+        options: [auto, nes_8bit, snes_16bit, gameboy, gba, cga, modern_pixel, isometric, topdown, character_sprite, tileset_terrain, tileset_dungeon, cyberpunk_pixel, fantasy_pixel, space_pixel, horror_pixel]
+      width:
+        description: 'Largura'
+        required: false
+        type: choice
+        default: '64'
+        options: ['16','32','64','128','256']
+      height:
+        description: 'Altura'
+        required: false
+        type: choice
+        default: '64'
+        options: ['16','32','64','128','256']
+      palette_size:
+        description: 'Cores na paleta'
+        required: false
+        type: choice
+        default: '16'
+        options: ['2','4','8','16','32','64']
+      dithering:
+        description: 'Dithering'
+        required: false
+        type: choice
+        default: 'bayer4x4'
+        options: [none, bayer2x2, bayer4x4, bayer8x8, floyd_steinberg, atkinson]
+      outline:
+        description: 'Outline'
+        required: false
+        type: choice
+        default: 'none'
+        options: [none, dark, light, auto]
+      scale:
+        description: 'Escala final'
+        required: false
+        type: choice
+        default: '4'
+        options: ['1','2','4','8']
+      count:
+        description: 'Quantidade'
+        required: false
+        type: choice
+        default: '1'
+        options: ['1','2','3','5']
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    name: 🎨 Gerar Pixel Art
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROMPT: ${{ inputs.prompt }}
+      STYLE: ${{ inputs.style }}
+      WIDTH: ${{ inputs.width }}
+      HEIGHT: ${{ inputs.height }}
+      PALETTE_SIZE: ${{ inputs.palette_size }}
+      DITHERING: ${{ inputs.dithering }}
+      OUTLINE: ${{ inputs.outline }}
+      SCALE: ${{ inputs.scale }}
+      COUNT: ${{ inputs.count }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: 📦 Dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: 🎨 Gerar
+        run: |
+          mkdir -p pixel_art_output models/layers
+          STYLE_ARG=""
+          if [ "$STYLE" != "auto" ]; then STYLE_ARG="--style $STYLE"; fi
+          python pixel_art_generator.py --batch --prompt "$PROMPT" \
+            --width $WIDTH --height $HEIGHT --palette-size $PALETTE_SIZE \
+            --dithering $DITHERING --outline $OUTLINE --scale $SCALE \
+            --count $COUNT $STYLE_ARG
+      - name: 💾 Commit e Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pixel_art_output/
+          if ! git diff --cached --quiet; then
+            git commit -m "🎨 Gerar pixel art: $PROMPT [$COUNT imagens]"
+            git pull --rebase origin ${{ github.ref_name }} || true
+            git push
+          fi
+      - name: 📤 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixel-art-${{ github.run_number }}
+          path: pixel_art_output/
+          retention-days: 30
