@@ -3,10 +3,6 @@
 🎨 GERADOR DE PIXEL ART COM MODELO TREINADO
 Usa o autoencoder condicional treinado para gerar imagens.
 Carrega automaticamente o checkpoint mais recente (latest.npz).
-
-Compatível com o modelo treinado em train.py:
-  Encoder: (256+256) -> 512 -> 128 (latent)
-  Decoder: 128 -> 512 -> 192 (patch 8x8x3)
 """
 import os, sys, json, hashlib, argparse, random
 from datetime import datetime
@@ -29,6 +25,16 @@ LATENT_DIM = 128
 OUTPUT_DIM = 192      # 8x8x3
 HIDDEN_DIM = 512
 CONDITION_DIM = 64
+SEED_MASK = 0xFFFFFFFF  # Garante seed de 32 bits não-negativo
+
+
+def make_seed(*parts):
+    """Gera seed de 32 bits a partir de várias partes."""
+    base = int.from_bytes(os.urandom(4), "little")
+    for p in parts:
+        base ^= hash(str(p))
+    return base & SEED_MASK
+
 
 # ============================================================
 # PALETAS
@@ -37,7 +43,6 @@ PALETTE_NES = ["#7C7C7C","#0000FC","#0000BC","#4428BC","#940084","#A80020","#A81
 PALETTE_GAMEBOY = ["#0f380f","#306230","#8bac0f","#9bbc0e"]
 PALETTE_CGA = ["#000000","#55FFFF","#FF55FF","#FFFFFF"]
 
-# Matrizes Bayer para dithering ordenado
 BAYER_2x2 = np.array([[0,2],[3,1]],dtype=np.float32)/4.0
 BAYER_4x4 = np.array([[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]],dtype=np.float32)/16.0
 BAYER_8x8 = np.array([[0,32,8,40,2,34,10,42],[48,16,56,24,50,18,58,26],[12,44,4,36,14,46,6,38],[60,28,52,20,62,30,54,22],[3,35,11,43,1,33,9,41],[51,19,59,27,49,17,57,25],[15,47,7,39,13,45,5,37],[63,31,55,23,61,29,53,21]],dtype=np.float32)/64.0
@@ -49,18 +54,15 @@ def hex_to_rgb(h):
 
 
 def make_palette(name="nes", n=16, seed=None):
-    """Monta uma paleta limitada de N cores."""
     rng = np.random.RandomState(seed)
     palettes = {
-        "nes": PALETTE_NES,
-        "gameboy": PALETTE_GAMEBOY,
-        "cga": PALETTE_CGA,
-        "monochrome": ["#000000", "#555555", "#AAAAAA", "#FFFFFF"],
-        "sepia": ["#3B2414", "#6B4423", "#A67B5B", "#D4A574", "#E8C8A0", "#F5E6D3", "#F8F0E3", "#FFFFFF"],
-        "pastel": ["#FFD1DC", "#FFB7C5", "#FDFD96", "#B5EAD7", "#C7CEEA", "#E2F0CB", "#FFDAC1", "#B5D8EB", "#F0E6FF", "#FFE4E1", "#DCD0FF", "#C1E1C1", "#FFEBCD", "#E0FFFF", "#F5DEB3", "#FFFACD"],
-        "neon": ["#FF006E", "#FF4DA6", "#FF00FF", "#CC00FF", "#8B00FF", "#00F0FF", "#00FFFF", "#39FF14", "#CCFF00", "#FFF200", "#FF8C00", "#FF1744", "#D500F9", "#651FFF", "#00E5FF", "#76FF03"],
-        "dark": ["#0A0A0A", "#1A1A1A", "#2C2C2C", "#3D3D3D", "#4F4F4F", "#1A0000", "#2A0000", "#3A0000", "#00001A", "#00002A", "#00003A", "#1A001A", "#2A002A", "#3A003A", "#0A1A0A", "#1A2A1A"],
-        "bright": ["#FFFFFF", "#FFFFAA", "#AAFFFF", "#FFAAFF", "#AAFFAA", "#FFAAAA", "#AAAAFF", "#FFCC00", "#00CCFF", "#FF00CC", "#00FFCC", "#CCFF00", "#CC00FF", "#00FF00", "#FF0000", "#0000FF"],
+        "nes": PALETTE_NES, "gameboy": PALETTE_GAMEBOY, "cga": PALETTE_CGA,
+        "monochrome": ["#000000","#555555","#AAAAAA","#FFFFFF"],
+        "sepia": ["#3B2414","#6B4423","#A67B5B","#D4A574","#E8C8A0","#F5E6D3","#F8F0E3","#FFFFFF"],
+        "pastel": ["#FFD1DC","#FFB7C5","#FDFD96","#B5EAD7","#C7CEEA","#E2F0CB","#FFDAC1","#B5D8EB","#F0E6FF","#FFE4E1","#DCD0FF","#C1E1C1","#FFEBCD","#E0FFFF","#F5DEB3","#FFFACD"],
+        "neon": ["#FF006E","#FF4DA6","#FF00FF","#CC00FF","#8B00FF","#00F0FF","#00FFFF","#39FF14","#CCFF00","#FFF200","#FF8C00","#FF1744","#D500F9","#651FFF","#00E5FF","#76FF03"],
+        "dark": ["#0A0A0A","#1A1A1A","#2C2C2C","#3D3D3D","#4F4F4F","#1A0000","#2A0000","#3A0000","#00001A","#00002A","#00003A","#1A001A","#2A002A","#3A003A","#0A1A0A","#1A2A1A"],
+        "bright": ["#FFFFFF","#FFFFAA","#AAFFFF","#FFAAFF","#AAFFAA","#FFAAAA","#AAAAFF","#FFCC00","#00CCFF","#FF00CC","#00FFCC","#CCFF00","#CC00FF","#00FF00","#FF0000","#0000FF"],
     }
     colors = palettes.get(name, PALETTE_NES)
     n = min(n, len(colors))
@@ -75,7 +77,6 @@ def make_palette(name="nes", n=16, seed=None):
 # DITHERING REAL
 # ============================================================
 def quantize(img, pal):
-    """Quantiza cada pixel para a cor mais próxima da paleta."""
     h, w, _ = img.shape
     flat = img.reshape(-1, 3).astype(np.float32)
     p = pal.astype(np.float32)
@@ -85,7 +86,6 @@ def quantize(img, pal):
 
 
 def dither_bayer(img, pal, matrix):
-    """Dithering ordenado Bayer."""
     h, w, _ = img.shape
     mh, mw = matrix.shape
     p = pal.astype(np.float32)
@@ -103,7 +103,6 @@ def dither_bayer(img, pal, matrix):
 
 
 def dither_floyd(img, pal):
-    """Floyd-Steinberg error diffusion."""
     h, w, _ = img.shape
     p = pal.astype(np.float32)
     img = img.astype(np.float32).copy()
@@ -118,19 +117,15 @@ def dither_floyd(img, pal):
             out[y, x] = new.astype(np.uint8)
             idx_out[y, x] = i
             err = old - new
-            if x + 1 < w:
-                img[y, x + 1] += err * 7 / 16
+            if x + 1 < w: img[y, x + 1] += err * 7 / 16
             if y + 1 < h:
-                if x - 1 >= 0:
-                    img[y + 1, x - 1] += err * 3 / 16
+                if x - 1 >= 0: img[y + 1, x - 1] += err * 3 / 16
                 img[y + 1, x] += err * 5 / 16
-                if x + 1 < w:
-                    img[y + 1, x + 1] += err * 1 / 16
+                if x + 1 < w: img[y + 1, x + 1] += err * 1 / 16
     return np.clip(out, 0, 255).astype(np.uint8), idx_out
 
 
 def dither_atkinson(img, pal):
-    """Atkinson dithering (estilo Mac clássico)."""
     h, w, _ = img.shape
     p = pal.astype(np.float32)
     img = img.astype(np.float32).copy()
@@ -145,46 +140,33 @@ def dither_atkinson(img, pal):
             out[y, x] = new.astype(np.uint8)
             idx_out[y, x] = i
             err = (old - new) / 8
-            if x + 1 < w:
-                img[y, x + 1] += err
-            if x + 2 < w:
-                img[y, x + 2] += err
+            if x + 1 < w: img[y, x + 1] += err
+            if x + 2 < w: img[y, x + 2] += err
             if y + 1 < h:
-                if x - 1 >= 0:
-                    img[y + 1, x - 1] += err
+                if x - 1 >= 0: img[y + 1, x - 1] += err
                 img[y + 1, x] += err
-                if x + 1 < w:
-                    img[y + 1, x + 1] += err
-            if y + 2 < h:
-                img[y + 2, x] += err
+                if x + 1 < w: img[y + 1, x + 1] += err
+            if y + 2 < h: img[y + 2, x] += err
     return np.clip(out, 0, 255).astype(np.uint8), idx_out
 
 
 def apply_dithering(img, pal, method="bayer4x4"):
-    """Aplica dithering pelo nome."""
-    if method == "bayer2x2":
-        return dither_bayer(img, pal, BAYER_2x2)
-    if method == "bayer4x4":
-        return dither_bayer(img, pal, BAYER_4x4)
-    if method == "bayer8x8":
-        return dither_bayer(img, pal, BAYER_8x8)
-    if method == "floyd_steinberg":
-        return dither_floyd(img, pal)
-    if method == "atkinson":
-        return dither_atkinson(img, pal)
+    if method == "bayer2x2": return dither_bayer(img, pal, BAYER_2x2)
+    if method == "bayer4x4": return dither_bayer(img, pal, BAYER_4x4)
+    if method == "bayer8x8": return dither_bayer(img, pal, BAYER_8x8)
+    if method == "floyd_steinberg": return dither_floyd(img, pal)
+    if method == "atkinson": return dither_atkinson(img, pal)
     return quantize(img, pal)
 
 
 def add_outline(img, color="dark"):
-    """Adiciona contorno ao redor de regiões não-brancas."""
     h, w, _ = img.shape
     out = img.copy()
     ol = np.array([0, 0, 0] if color == "dark" else [255, 255, 255], dtype=np.uint8)
     bg = np.array([255, 255, 255], dtype=np.uint8)
     for y in range(h):
         for x in range(w):
-            if np.array_equal(img[y, x], bg):
-                continue
+            if np.array_equal(img[y, x], bg): continue
             for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                 ny, nx = y + dy, x + dx
                 if 0 <= ny < h and 0 <= nx < w and np.array_equal(img[ny, nx], bg):
@@ -194,63 +176,48 @@ def add_outline(img, color="dark"):
 
 
 def resize_nearest(img, scale=4):
-    """Amplia com nearest neighbor (pixels nítidos)."""
     pil = Image.fromarray(img)
     return np.array(pil.resize((pil.width * scale, pil.height * scale), Image.NEAREST))
 
 
 # ============================================================
-# MODELO TREINADO (autoencoder condicional)
+# MODELO TREINADO
 # ============================================================
 class TrainedModel:
-    """Carrega e usa o decoder do autoencoder treinado."""
-
     def __init__(self):
-        self.W_dec1 = None
-        self.b_dec1 = None
-        self.W_dec2 = None
-        self.b_dec2 = None
+        self.W_dec1 = None; self.b_dec1 = None
+        self.W_dec2 = None; self.b_dec2 = None
         self.loaded = False
-        self.epoch = 0
-        self.loss = 0.0
+        self.epoch = 0; self.loss = 0.0
         self.manifest = {}
 
     def load_latest(self):
-        """Carrega o checkpoint mais recente."""
         latest = CHECKPOINT_DIR / "latest.npz"
         if not latest.exists():
-            # Procura qualquer checkpoint por data de modificação
             ckpts = sorted(CHECKPOINT_DIR.glob("model_epoch_*.npz"),
                            key=lambda p: p.stat().st_mtime, reverse=True)
             if not ckpts:
-                print("⚠️ NENHUM MODELO TREINADO ENCONTRADO!")
+                print("⚠️ NENHUM MODELO TREINADO!")
                 print("   Rode primeiro: Actions > Treinar Modelo")
-                print("   Usando pesos aleatórios (qualidade ruim)...")
+                print("   Usando pesos aleatórios...")
                 self._init_random()
                 return False
             latest = ckpts[0]
-
         print(f"📂 Carregando modelo: {latest.name}")
         d = np.load(latest)
         for k in ['W_dec1', 'b_dec1', 'W_dec2', 'b_dec2']:
-            if k in d.files:
-                setattr(self, k, d[k])
+            if k in d.files: setattr(self, k, d[k])
         self.epoch = int(d['epoch']) if 'epoch' in d.files else 0
         self.loss = float(d['loss']) if 'loss' in d.files else 0.0
         self.loaded = True
-
         if MANIFEST_FILE.exists():
             try:
-                with open(MANIFEST_FILE) as f:
-                    self.manifest = json.load(f)
-            except Exception:
-                pass
-
-        print(f"   ✅ Modelo carregado: epoch {self.epoch}, loss {self.loss:.5f}")
+                with open(MANIFEST_FILE) as f: self.manifest = json.load(f)
+            except Exception: pass
+        print(f"   ✅ Modelo: epoch {self.epoch}, loss {self.loss:.5f}")
         return True
 
     def _init_random(self):
-        """Fallback: pesos aleatórios se não houver modelo."""
         rng = np.random.RandomState(42)
         s_dec = np.sqrt(2.0 / (LATENT_DIM + HIDDEN_DIM))
         self.W_dec1 = (rng.randn(LATENT_DIM, HIDDEN_DIM) * s_dec).astype(np.float32)
@@ -260,30 +227,29 @@ class TrainedModel:
         self.loaded = False
 
     def decode(self, z):
-        """Forward do decoder: z(128) -> patch(192)."""
         h1_pre = z @ self.W_dec1 + self.b_dec1
-        h1 = np.maximum(0.0, h1_pre)          # ReLU
+        h1 = np.maximum(0.0, h1_pre)
         out_pre = h1 @ self.W_dec2 + self.b_dec2
-        return np.tanh(out_pre)                # saída em [-1, 1]
+        return np.tanh(out_pre)
 
     def generate_patch(self, noise_scale=1.0, seed=None):
-        """Gera um patch 8x8 amostrando o espaço latente."""
-        rng = np.random.RandomState(seed)
+        # ✅ CORREÇÃO: seed sempre positivo e < 2**32
+        safe_seed = int(seed) & SEED_MASK if seed is not None else 0
+        rng = np.random.RandomState(safe_seed)
         z = rng.randn(1, LATENT_DIM).astype(np.float32) * noise_scale
         z = np.clip(z, -2.0, 2.0)
         out = self.decode(z)
         patch = out.reshape(PATCH_SIZE, PATCH_SIZE, 3)
-        patch = (patch + 1.0) / 2.0            # [-1,1] -> [0,1]
+        patch = (patch + 1.0) / 2.0
         return np.clip(patch, 0.0, 1.0)
 
     def generate_image(self, width, height, noise_scale=1.0, seed=None):
-        """Gera imagem completa montando patches 8x8."""
         n_px = max(1, width // PATCH_SIZE)
         n_py = max(1, height // PATCH_SIZE)
         img = np.zeros((height, width, 3), dtype=np.float32)
         for py in range(n_py):
             for px in range(n_px):
-                patch_seed = (seed or 0) + py * 1000 + px
+                patch_seed = make_seed(seed, py * 1000 + px)
                 patch = self.generate_patch(noise_scale, patch_seed)
                 y0, x0 = py * PATCH_SIZE, px * PATCH_SIZE
                 y1 = min(y0 + PATCH_SIZE, height)
@@ -306,7 +272,6 @@ KEYWORDS = {
     "cga": {"style": "cga", "palette": "cga", "palette_size": 4},
     "retrô": {"style": "nes_8bit"}, "retro": {"style": "nes_8bit"},
     "isométrico": {"style": "isometric"}, "isometric": {"style": "isometric"},
-    "top-down": {"style": "topdown"},
     "cyberpunk": {"style": "cyberpunk_pixel", "palette": "neon"},
     "steampunk": {"style": "steampunk_pixel", "palette": "sepia"},
     "medieval": {"style": "medieval_pixel"}, "anime": {"style": "anime_pixel"},
@@ -316,22 +281,18 @@ KEYWORDS = {
     "monocromático": {"palette": "monochrome", "palette_size": 4},
     "monocromatico": {"palette": "monochrome", "palette_size": 4},
     "escuro": {"palette": "dark"}, "claro": {"palette": "bright"},
-    "personagem": {"subject": "character"}, "herói": {"subject": "hero"}, "heroi": {"subject": "hero"},
-    "vilão": {"subject": "villain"}, "monstro": {"subject": "monster"}, "inimigo": {"subject": "enemy"},
-    "dragão": {"subject": "dragon"}, "dragao": {"subject": "dragon"},
-    "slime": {"subject": "slime"}, "goblin": {"subject": "goblin"}, "esqueleto": {"subject": "skeleton"},
-    "espada": {"subject": "sword"}, "escudo": {"subject": "shield"}, "poção": {"subject": "potion"},
-    "floresta": {"scene": "forest"}, "dungeon": {"scene": "dungeon"}, "caverna": {"scene": "cave"},
-    "cidade": {"scene": "city"}, "espaço": {"scene": "space"}, "espaco": {"scene": "space"},
+    "personagem": {"subject": "character"}, "herói": {"subject": "hero"},
+    "dragão": {"subject": "dragon"}, "slime": {"subject": "slime"},
+    "floresta": {"scene": "forest"}, "dungeon": {"scene": "dungeon"},
+    "cidade": {"scene": "city"}, "espaço": {"scene": "space"},
     "deserto": {"scene": "desert"}, "montanha": {"scene": "mountain"},
     "subaquático": {"scene": "underwater"}, "mar": {"scene": "water"},
-    "tileset": {"category": "tileset"}, "terreno": {"scene": "terrain"}, "grama": {"scene": "grass"},
+    "tileset": {"category": "tileset"}, "terreno": {"scene": "terrain"},
     "água": {"scene": "water"}, "agua": {"scene": "water"}, "noite": {"palette": "dark"},
 }
 
 
 def interpret_prompt(prompt):
-    """Extrai configurações do prompt em português."""
     cfg = {"style": "modern_pixel", "palette": "nes", "palette_size": 16,
            "dithering": "bayer4x4", "outline": "none", "subject": None,
            "scene": None, "category": None, "tags": []}
@@ -339,15 +300,11 @@ def interpret_prompt(prompt):
     for key in sorted(KEYWORDS.keys(), key=len, reverse=True):
         if key in pl:
             for k, v in KEYWORDS[key].items():
-                if v is not None:
-                    cfg[k] = v
+                if v is not None: cfg[k] = v
             cfg["tags"].append(key)
     return cfg
 
 
-# ============================================================
-# RAG
-# ============================================================
 class RAG:
     def __init__(self, path=KNOWLEDGE_FILE):
         self.entries = []
@@ -355,27 +312,20 @@ class RAG:
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     self.entries = json.load(f).get("entries", [])
-            except Exception:
-                pass
+            except Exception: pass
 
     def retrieve(self, query, top_k=3):
-        if not self.entries:
-            return []
+        if not self.entries: return []
         qt = set(query.lower().replace(",", " ").replace("-", " ").split())
         scored = []
         for e in self.entries:
             s = len(qt & set(t.lower() for t in e.get("tags", []))) * 3
-            if e.get("style", "").lower() in query.lower():
-                s += 5
-            if s > 0:
-                scored.append((s, e))
+            if e.get("style", "").lower() in query.lower(): s += 5
+            if s > 0: scored.append((s, e))
         scored.sort(key=lambda x: -x[0])
         return [e for _, e in scored[:top_k]]
 
 
-# ============================================================
-# SAÍDA
-# ============================================================
 def get_next_number():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     nums = [int(f.stem) for f in OUTPUT_DIR.glob("*.png") if f.stem.isdigit()]
@@ -395,70 +345,45 @@ def save(img, meta, scale=4):
     return meta
 
 
-# ============================================================
-# PIPELINE PRINCIPAL
-# ============================================================
 def generate_pixel_art(prompt, width=64, height=64, style=None, palette_size=16,
                        dithering="bayer4x4", outline="none", scale=4, seed=None,
                        noise_scale=1.0, model=None):
-    """Gera UMA pixel art usando o modelo treinado."""
     print(f"\n🎨 Gerando: '{prompt}'")
-
     if model is None:
         model = TrainedModel()
         model.load_latest()
-
     cfg = interpret_prompt(prompt)
-    if style:
-        cfg["style"] = style
+    if style: cfg["style"] = style
     cfg["palette_size"] = palette_size
     cfg["dithering"] = dithering
     cfg["outline"] = outline
-
     rag = RAG()
     matches = rag.retrieve(prompt, top_k=3)
     if matches:
         top = matches[0]
-        if not style and top.get("style"):
-            cfg["style"] = top["style"]
-        if top.get("palette"):
-            cfg["palette"] = top["palette"]
+        if not style and top.get("style"): cfg["style"] = top["style"]
+        if top.get("palette"): cfg["palette"] = top["palette"]
         print(f"   📚 RAG: {[m.get('style') for m in matches]}")
-
+    # ✅ CORREÇÃO: seed sempre em 32 bits não-negativo
     if seed is None:
-        seed = int.from_bytes(os.urandom(4), "little") ^ hash(prompt)
-
+        seed = make_seed(prompt)
+    else:
+        seed = int(seed) & SEED_MASK
     print(f"   🧠 Modelo: epoch {model.epoch}, loss {model.loss:.4f}, treinado={model.loaded}")
     print(f"   🎲 Seed: {seed} | Noise: {noise_scale}")
-
-    # Gera imagem base com o decoder treinado
     base_img = model.generate_image(width, height, noise_scale, seed)
-
-    # Aplica paleta limitada + dithering
     pal = make_palette(cfg["palette"], cfg["palette_size"], seed)
     dithered, _ = apply_dithering(base_img, pal, cfg["dithering"])
-
-    # Outline opcional
     if cfg["outline"] not in (None, "none"):
         dithered = add_outline(dithered, cfg["outline"])
-
     meta = {
-        "prompt": prompt,
-        "config": {k: v for k, v in cfg.items() if k != "tags"},
-        "tags": cfg["tags"],
-        "rag_matches": [m.get("style") for m in matches],
-        "model_epoch": model.epoch,
-        "model_loss": model.loss,
-        "model_trained": model.loaded,
-        "seed": seed,
-        "noise_scale": noise_scale,
-        "palette_name": cfg["palette"],
-        "palette_size": int(cfg["palette_size"]),
-        "dithering": cfg["dithering"],
-        "outline": cfg["outline"],
-        "timestamp": datetime.now().isoformat(),
-        "resolution": [width, height],
-        "scale": scale,
+        "prompt": prompt, "config": {k: v for k, v in cfg.items() if k != "tags"},
+        "tags": cfg["tags"], "rag_matches": [m.get("style") for m in matches],
+        "model_epoch": model.epoch, "model_loss": model.loss, "model_trained": model.loaded,
+        "seed": seed, "noise_scale": noise_scale, "palette_name": cfg["palette"],
+        "palette_size": int(cfg["palette_size"]), "dithering": cfg["dithering"],
+        "outline": cfg["outline"], "timestamp": datetime.now().isoformat(),
+        "resolution": [width, height], "scale": scale,
     }
     saved = save(dithered, meta, scale)
     print(f"   ✅ Salvo: {saved['path']}")
@@ -466,23 +391,18 @@ def generate_pixel_art(prompt, width=64, height=64, style=None, palette_size=16,
 
 
 def batch_generate(prompt, count=1, **kw):
-    """Gera múltiplas pixel arts (modo GitHub Actions)."""
     model = TrainedModel()
     model.load_latest()
-    # ✅ CORREÇÃO: remove 'seed' de kw para evitar conflito com o seed individual
-    kw.pop('seed', None)
+    kw.pop('seed', None)  # remove seed antigo para evitar conflito
     results = []
     for i in range(count):
-        s = int.from_bytes(os.urandom(4), "little") ^ hash(prompt + str(i))
+        s = make_seed(prompt, i)  # ✅ CORREÇÃO: usa make_seed
         results.append(generate_pixel_art(prompt, seed=s, model=model, **kw))
     return results
 
 
-# ============================================================
-# MENU INTERATIVO / CLI
-# ============================================================
 def main():
-    p = argparse.ArgumentParser(description="🎨 Gerador Pixel Art (Modelo Treinado)")
+    p = argparse.ArgumentParser(description="🎨 Gerador Pixel Art")
     p.add_argument("--batch", action="store_true")
     p.add_argument("--prompt", type=str)
     p.add_argument("--width", type=int, default=64)
@@ -496,23 +416,18 @@ def main():
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--noise-scale", type=float, default=1.0)
     args = p.parse_args()
-
     print("=" * 60)
     print("🎨 PIXEL ART AI - MODELO TREINADO")
     print("=" * 60)
-
     if args.batch:
         if not args.prompt:
-            print("❌ --prompt obrigatório")
-            sys.exit(1)
+            print("❌ --prompt obrigatório"); sys.exit(1)
         batch_generate(args.prompt, count=args.count, width=args.width, height=args.height,
                        style=args.style, palette_size=args.palette_size, dithering=args.dithering,
                        outline=args.outline, scale=args.scale, seed=args.seed,
                        noise_scale=args.noise_scale)
         print(f"\n✅ {args.count} pixel arts geradas em {OUTPUT_DIR}/")
         return
-
-    # Modo interativo
     model = TrainedModel()
     model.load_latest()
     while True:
@@ -520,8 +435,7 @@ def main():
         op = input("Opção: ").strip()
         if op == "1":
             pr = input("Prompt: ").strip()
-            if pr:
-                generate_pixel_art(pr, model=model)
+            if pr: generate_pixel_art(pr, model=model)
         elif op == "2":
             generate_pixel_art(random.choice([
                 "herói estilo NES", "dragão 16-bit", "floresta Game Boy",
@@ -529,18 +443,13 @@ def main():
             ]), model=model)
         elif op == "3":
             pr = input("Prompt: ").strip()
-            if pr:
-                batch_generate(pr, count=5)
+            if pr: batch_generate(pr, count=5)
         elif op == "4":
             if OUTPUT_DIR.exists():
-                for f in sorted(OUTPUT_DIR.glob("*.png"))[-10:]:
-                    print(f"  - {f.name}")
+                for f in sorted(OUTPUT_DIR.glob("*.png"))[-10:]: print(f"  - {f.name}")
         elif op == "5":
-            print(f"   Modelo carregado: {model.loaded}")
-            print(f"   Epoch: {model.epoch}")
-            print(f"   Loss: {model.loss:.5f}")
-        elif op == "6":
-            break
+            print(f"   Modelo: {model.loaded} | Epoch: {model.epoch} | Loss: {model.loss:.5f}")
+        elif op == "6": break
 
 
 if __name__ == "__main__":
