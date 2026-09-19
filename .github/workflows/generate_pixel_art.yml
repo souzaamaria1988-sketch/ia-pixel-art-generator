@@ -12,7 +12,7 @@ on:
         required: false
         type: choice
         default: 'auto'
-        options: [auto, nes_8bit, snes_16bit, gameboy, gba, cga, modern_pixel, isometric, topdown, character_sprite, tileset_terrain, cyberpunk_pixel, fantasy_pixel, space_pixel, horror_pixel]
+        options: [auto, nes_8bit, snes_16bit, gameboy, gba, cga, modern_pixel, isometric, cyberpunk_pixel, fantasy_pixel, space_pixel, horror_pixel]
       width:
         description: 'Largura'
         required: false
@@ -56,18 +56,24 @@ on:
         default: '1'
         options: ['1','2','3','5']
       noise_scale:
-        description: 'Criatividade'
+        description: 'Variabilidade (0.5-1.5 recomendado)'
         required: false
         type: choice
         default: '1.0'
         options: ['0.5','0.75','1.0','1.25','1.5','2.0']
+      coherence:
+        description: 'Coerência entre patches (0-1)'
+        required: false
+        type: choice
+        default: '0.3'
+        options: ['0.0','0.1','0.3','0.5','0.7','0.9']
 
 permissions:
   contents: write
 
 jobs:
   generate:
-    name: 🎨 Gerar Pixel Art
+    name: 🎨 Gerar Pixel Art (VAE)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -81,6 +87,7 @@ jobs:
       SCALE: ${{ inputs.scale }}
       COUNT: ${{ inputs.count }}
       NOISE_SCALE: ${{ inputs.noise_scale }}
+      COHERENCE: ${{ inputs.coherence }}
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
@@ -95,13 +102,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: 🔍 Verificar modelo
+      - name: 🔍 Verificar VAE
         run: |
           if [ -f "models/checkpoints/latest.npz" ]; then
-            echo "✅ Modelo treinado encontrado!"
+            echo "✅ VAE treinado encontrado!"
             ls -lh models/checkpoints/
           else
-            echo "⚠️ Sem modelo treinado - usando pesos aleatórios"
+            echo "⚠️ Sem VAE treinado - usando pesos aleatórios"
           fi
       - name: 🎨 Gerar
         run: |
@@ -111,14 +118,14 @@ jobs:
           python pixel_art_generator.py --batch --prompt "$PROMPT" \
             --width $WIDTH --height $HEIGHT --palette-size $PALETTE_SIZE \
             --dithering $DITHERING --outline $OUTLINE --scale $SCALE \
-            --count $COUNT --noise-scale $NOISE_SCALE $STYLE_ARG
+            --count $COUNT --noise-scale $NOISE_SCALE --coherence $COHERENCE $STYLE_ARG
       - name: 💾 Commit e Push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add pixel_art_output/
           if ! git diff --cached --quiet; then
-            git commit -m "🎨 Gerar pixel art: $PROMPT [$COUNT imagens]"
+            git commit -m "🎨 Gerar pixel art: $PROMPT [$COUNT]"
             git pull --rebase origin ${{ github.ref_name }} || true
             git push
           fi
