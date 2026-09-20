@@ -1,0 +1,41 @@
+{
+  "prompt": "Um dragão ",
+  "config": {
+    "raw_prompt": "Um dragão ",
+    "style": "modern_pixel",
+    "palette": "nes",
+    "palette_size": 16,
+    "dithering": "bayer4x4",
+    "outline": "none",
+    "pixel_art_type": "character",
+    "mood": null,
+    "traits": [
+      "outline",
+      "symmetric"
+    ]
+  },
+  "tags": [
+    "dragão"
+  ],
+  "rag_matches": [
+    "fantasy_pixel",
+    "enemy_sprite"
+  ],
+  "model_epoch": 15000,
+  "model_loss": 0.08057416156218165,
+  "model_trained": true,
+  "seed": 3069680133,
+  "noise_scale": 1.0,
+  "coherence": 0.3,
+  "overlap": 2,
+  "palette_name": "nes",
+  "palette_size": 16,
+  "dithering": "bayer4x4",
+  "outline": "none",
+  "timestamp": "2026-09-20T22:45:12.659302",
+  "resolution": [
+    64,
+    64
+  ],
+  "scale": 4
+}
