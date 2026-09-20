@@ -1,19 +1,22 @@
 {
-  "model_type": "conditional_autoencoder",
+  "model_type": "conditional_vae",
   "architecture": {
     "input_dim": 256,
     "latent_dim": 128,
     "output_dim": 192,
     "hidden_dim": 512,
     "condition_dim": 64,
-    "patch_size": 8
+    "patch_size": 8,
+    "beta_kl": 0.001
   },
-  "total_params": 509248,
-  "epochs": 25000,
-  "final_loss": 0.024345974926836787,
-  "best_loss": 0.021662517866025154,
-  "trained_at": "2026-09-19T21:58:27",
-  "training_time_seconds": 5040,
+  "total_params": 574912,
+  "epochs": 15000,
+  "final_loss": 0.08057416156218165,
+  "final_recon": 0.07829578345020612,
+  "final_kl": 2.2783781119755337,
+  "best_loss": 0.07930886327841927,
+  "trained_at": "2026-09-20T00:06:42",
+  "training_time_seconds": 5830,
   "checkpoint": "latest.npz",
   "runner": "ubuntu-latest"
 }
