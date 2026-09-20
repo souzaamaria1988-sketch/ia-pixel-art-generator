@@ -1,0 +1,33 @@
+{
+  "prompt": "Uma música épica de batalha",
+  "config": {
+    "raw_prompt": "Uma música épica de batalha",
+    "style": "modern_pixel",
+    "palette": "nes",
+    "palette_size": 16,
+    "dithering": "bayer4x4",
+    "outline": "none",
+    "pixel_art_type": null,
+    "mood": null,
+    "traits": []
+  },
+  "tags": [],
+  "rag_matches": [],
+  "model_epoch": 15000,
+  "model_loss": 0.08057416156218165,
+  "model_trained": true,
+  "seed": 2213605859,
+  "noise_scale": 1.0,
+  "coherence": 0.3,
+  "overlap": 2,
+  "palette_name": "nes",
+  "palette_size": 16,
+  "dithering": "bayer4x4",
+  "outline": "none",
+  "timestamp": "2026-09-20T12:32:07.042230",
+  "resolution": [
+    64,
+    64
+  ],
+  "scale": 4
+}
